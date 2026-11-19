@@ -1,0 +1,333 @@
+/* SPDX-License-Identifier: GPL-3.0-or-later */
+
+:root {
+  --bg: #0b0817;
+  --panel: #130f26;
+  --line: #2b2547;
+  --ink: #ece9f6;
+  --ink-soft: #b6b1cf;
+  --red: #ff6b81;
+  --amber: #f5b84a;
+  --unknown: #a8b4d8;
+  --focus: #b79cff;
+  --sans: Inter, system-ui, -apple-system, "Segoe UI", sans-serif;
+  --mono: "JetBrains Mono", ui-monospace, "Cascadia Mono", Menlo, Consolas, monospace;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--ink);
+  font: 1rem/1.55 var(--sans);
+}
+
+.scanner {
+  max-width: 54rem;
+  margin: 0 auto;
+  padding: 2.5rem 1.25rem 4rem;
+}
+
+.scanner h1 {
+  margin: 0 0 0.5rem;
+  font-size: 2rem;
+  line-height: 1.15;
+}
+
+.scanner h2 {
+  margin: 2.25rem 0 0.75rem;
+  font-size: 1.15rem;
+}
+
+.lede {
+  max-width: 38rem;
+  margin: 0 0 1.75rem;
+  color: var(--ink-soft);
+}
+
+.notice {
+  padding: 0.75rem 1rem;
+  border: 1px solid var(--amber);
+  border-radius: 6px;
+}
+
+.drop {
+  display: block;
+  padding: 2rem 1.25rem;
+  border: 1px dashed var(--line);
+  border-radius: 8px;
+  background: var(--panel);
+  text-align: center;
+  cursor: pointer;
+}
+
+.drop:focus-within {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+
+.drop-title {
+  display: block;
+  font-size: 1.15rem;
+  font-weight: 600;
+}
+
+.drop-hint {
+  display: block;
+  margin-bottom: 0.9rem;
+  color: var(--ink-soft);
+}
+
+.drop input {
+  max-width: 100%;
+  color: var(--ink-soft);
+  font: inherit;
+}
+
+.status {
+  min-height: 1.55rem;
+  margin: 1.25rem 0 0;
+  font-weight: 600;
+}
+
+.counts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem 2.5rem;
+  margin: 1rem 0 0;
+}
+
+.count dt {
+  color: var(--ink-soft);
+  font-size: 0.9rem;
+}
+
+.count dd {
+  margin: 0;
+  font-size: 1.75rem;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.2;
+}
+
+.count[data-severity="red"] dd,
+.finding[data-severity="red"] .finding-weight,
+.finding-reason[data-severity="red"] .reason-weight,
+.log [data-severity="red"] {
+  color: var(--red);
+}
+
+.count[data-severity="amber"] dd,
+.finding[data-severity="amber"] .finding-weight,
+.finding-reason[data-severity="amber"] .reason-weight,
+.log [data-severity="amber"] {
+  color: var(--amber);
+}
+
+.count[data-severity="not_checked"] dd,
+.finding[data-severity="not_checked"] .finding-weight,
+.finding-reason[data-severity="not_checked"] .reason-weight,
+.log [data-severity="not_checked"] {
+  color: var(--unknown);
+}
+
+.log {
+  max-height: 22rem;
+  margin: 0;
+  padding: 0.9rem 1rem;
+  overflow: auto;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel);
+  font: 0.85rem/1.6 var(--mono);
+  list-style: none;
+  overflow-wrap: anywhere;
+}
+
+.log:empty::before {
+  content: "Nothing scanned yet.";
+  color: var(--ink-soft);
+}
+
+.log-status {
+  color: var(--ink-soft);
+}
+
+.findings {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.finding {
+  display: grid;
+  gap: 0.15rem;
+  padding: 0.8rem 0;
+  border-top: 1px solid var(--line);
+}
+
+.finding-weight {
+  font-size: 0.9rem;
+  font-weight: 700;
+}
+
+.finding-path {
+  font: 0.85rem/1.5 var(--mono);
+  overflow-wrap: anywhere;
+}
+
+/* Not a path: a finding about the archive itself, or the count of a rule's findings past the cap. */
+.finding-no-path {
+  font-family: inherit;
+  color: var(--ink-soft);
+}
+
+.finding-text {
+  color: var(--ink-soft);
+}
+
+.finding-reasons {
+  display: grid;
+  gap: 0.6rem;
+  margin: 0.2rem 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.finding-reason {
+  display: grid;
+  gap: 0.15rem;
+}
+
+.reason-weight {
+  font-size: 0.8rem;
+  font-weight: 700;
+}
+
+/* A weight per reason only when the reasons of one file differ in weight. */
+.finding:not([data-mixed="true"]) .reason-weight {
+  display: none;
+}
+
+/* The row already names its heaviest weight; only the lighter reasons under it need a label. */
+.finding[data-severity="red"] .finding-reason[data-severity="red"] .reason-weight,
+.finding[data-severity="amber"] .finding-reason[data-severity="amber"] .reason-weight {
+  display: none;
+}
+
+.findings-undrawn {
+  padding: 0.8rem 0;
+  border-top: 1px solid var(--line);
+  color: var(--ink-soft);
+}
+
+.advisories-note {
+  max-width: 38rem;
+  margin: 0 0 0.75rem;
+  color: var(--ink-soft);
+}
+
+.advisories {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.advisory {
+  padding: 0.8rem 0;
+  border-top: 1px solid var(--line);
+}
+
+.advisory-heading {
+  margin: 0;
+  font-weight: 600;
+}
+
+.advisory-closed {
+  margin: 0.25rem 0 0;
+}
+
+.advisory ul {
+  margin: 0.4rem 0 0;
+  padding-left: 1.1rem;
+  color: var(--ink-soft);
+  overflow-wrap: anywhere;
+}
+
+.advisory a {
+  color: var(--focus);
+}
+
+/* Once a scan is over the log shrinks to its last lines; the button under it brings it back. */
+.log[data-expanded="false"] {
+  max-height: 5.4rem;
+}
+
+.log-toggle,
+.example,
+.export button {
+  margin: 0.6rem 0.5rem 0 0;
+  padding: 0.5rem 0.9rem;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--panel);
+  color: var(--ink);
+  font: inherit;
+  cursor: pointer;
+}
+
+.option {
+  display: block;
+  max-width: 38rem;
+  margin: 1rem 0 0;
+  color: var(--ink-soft);
+}
+
+.summary {
+  max-width: 44rem;
+  margin: 0.6rem 0 0;
+  padding-left: 1.1rem;
+  color: var(--ink-soft);
+}
+
+.finding-excerpt {
+  padding: 0.35rem 0.6rem;
+  border-radius: 4px;
+  background: var(--panel);
+  font: 0.8rem/1.5 var(--mono);
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
+.finding-hash {
+  font: 0.8rem/1.5 var(--mono);
+  color: var(--ink-soft);
+  overflow-wrap: anywhere;
+}
+
+.loaded-code,
+.components {
+  margin: 0;
+  padding-left: 1.1rem;
+  font: 0.85rem/1.6 var(--mono);
+  overflow-wrap: anywhere;
+}
+
+.report-text {
+  display: block;
+  width: 100%;
+  height: 14rem;
+  margin-top: 0.75rem;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--panel);
+  color: var(--ink);
+  font: 0.8rem/1.5 var(--mono);
+}
+
+[hidden] {
+  display: none !important;
+}

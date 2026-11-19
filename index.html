@@ -1,0 +1,81 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex">
+<title>Backup Scanner for WordPress</title>
+<link rel="stylesheet" href="harness.css">
+<script type="module" src="scanner/main.js"></script>
+</head>
+<body>
+<!-- The bare page this repository is tested with. The scanner needs nothing from a page but
+     the elements marked data-scanner="..."; the page at helban.dev carries the same marks
+     in its own layout. -->
+<main class="scanner" data-scanner="root">
+  <h1>Backup Scanner for WordPress</h1>
+  <p class="lede">Checks a WordPress backup zip before you run it on your computer. The file is read in this browser tab and is not uploaded anywhere.</p>
+
+  <p class="notice" data-scanner="unsupported" hidden>This browser cannot unpack zip data on its own. Open the page in a current Chrome, Edge, Firefox or Safari.</p>
+  <noscript><p class="notice">The scanner runs in your browser and needs JavaScript.</p></noscript>
+
+  <label class="drop" data-scanner="drop">
+    <span class="drop-title">Drop a backup zip here</span>
+    <span class="drop-hint">or choose a file</span>
+    <input type="file" accept=".zip,application/zip" data-scanner="input">
+  </label>
+  <button type="button" class="example" data-scanner="example">Show me on an example</button>
+
+  <label class="option">
+    <input type="checkbox" data-scanner="online" checked>
+    Compare core and plugins with wordpress.org and look up known vulnerabilities at wpvulnerability.net. Only names and versions are sent, never the file.
+  </label>
+
+  <div class="result" data-scanner="result" hidden>
+    <p class="status" role="status" data-scanner="status"></p>
+    <ul class="summary" data-scanner="summary"></ul>
+
+    <dl class="counts">
+      <div class="count" data-severity="red"><dt>Red: do not run</dt><dd data-scanner="count-red">0</dd></div>
+      <div class="count" data-severity="amber"><dt>Amber: read first</dt><dd data-scanner="count-amber">0</dd></div>
+      <div class="count" data-severity="not_checked"><dt>Not checked</dt><dd data-scanner="count-not_checked">0</dd></div>
+    </dl>
+
+    <section data-scanner-section hidden>
+      <h2>Findings</h2>
+      <ol class="findings" data-scanner="findings"></ol>
+    </section>
+
+    <h2>Scan log</h2>
+    <ol class="log" role="log" aria-label="Scan log" data-scanner="log"></ol>
+    <button type="button" class="log-toggle" data-scanner="log-toggle"></button>
+
+    <section data-scanner-section hidden>
+      <h2>Code that WordPress loads by itself</h2>
+      <p>WordPress loads all of this by itself, with nothing to switch on in wp-admin. On every page view it runs wp-config.php, .maintenance, the mu-plugins and some of the drop-ins. The other drop-ins run in a situation of their own, such as a database WordPress cannot reach, and a copy started on a new machine stays in that situation until its database is connected. From wp-content/languages WordPress runs the file named after the site's language code (pl_PL.php, for example) on every page view, and it loads the translation files whenever it needs their texts. Translation files that hold nothing but texts are not listed. A wp-config.php is listed from the site's folder and from the one above it, the two places WordPress looks for it. Read all of it, whatever the findings say.</p>
+      <ol class="loaded-code" data-scanner="loaded-code"></ol>
+    </section>
+
+    <section data-scanner-section hidden>
+      <h2>Compared with wordpress.org</h2>
+      <ol class="components" data-scanner="components"></ol>
+    </section>
+
+    <section data-scanner-section hidden>
+      <h2>Known vulnerabilities</h2>
+      <p class="advisories-note">From wpvulnerability.net, for the versions found in the copy. An old version is not a trap, so nothing here counts as red: update everything on this list before the site goes live again.</p>
+      <ol class="advisories" data-scanner="advisories"></ol>
+    </section>
+
+    <div class="export" data-scanner="export" hidden>
+      <h2>Take the report with you</h2>
+      <button type="button" data-scanner="copy-text">Copy as text</button>
+      <button type="button" data-scanner="download-json">Download as JSON</button>
+      <label class="option"><input type="checkbox" data-scanner="mask" checked> Mask e-mail addresses in the report</label>
+      <p role="status" data-scanner="export-status"></p>
+      <textarea class="report-text" data-scanner="report-text" readonly hidden aria-label="The report as text"></textarea>
+    </div>
+  </div>
+</main>
+</body>
+</html>

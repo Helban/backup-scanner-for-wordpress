@@ -1,0 +1,109 @@
+{
+  "rules": [
+    "layout.disguised_executable",
+    "layout.executable_extension",
+    "layout.path_traversal",
+    "layout.php_in_media",
+    "layout.php_in_uploads",
+    "layout.symlink"
+  ],
+  "samples": {
+    "clean": [],
+    "dropper": [
+      [
+        "red",
+        "layout.disguised_executable",
+        "files/wp-content/uploads/2025/12/product-detail-mockup.jpeg"
+      ]
+    ],
+    "layout_mix": [
+      [
+        "red",
+        "layout.disguised_executable",
+        "files/wp-content/plugins/tool/payload.php"
+      ],
+      [
+        "red",
+        "layout.disguised_executable",
+        "files/wp-content/uploads/2025/12/notes.txt"
+      ],
+      [
+        "red",
+        "layout.executable_extension",
+        "files/wp-content/plugins/tool/helper.exe"
+      ],
+      [
+        "red",
+        "layout.executable_extension",
+        "files/wp-content/plugins/tool/run.sh"
+      ],
+      [
+        "red",
+        "layout.path_traversal",
+        "/absolute.txt"
+      ],
+      [
+        "red",
+        "layout.path_traversal",
+        "files/../outside.php"
+      ],
+      [
+        "red",
+        "layout.php_in_media",
+        "files/wp-content/uploads/2025/12/vector.svg"
+      ],
+      [
+        "red",
+        "layout.php_in_uploads",
+        "files/wp-content/uploads/2025/12/shell.php"
+      ],
+      [
+        "red",
+        "layout.symlink",
+        "files/wp-content/uploads/2025/12/link.jpg"
+      ]
+    ],
+    "executable_signature[windows_program]": [
+      [
+        "red",
+        "layout.disguised_executable",
+        "files/wp-content/uploads/2025/12/picture-windows_program.png"
+      ]
+    ],
+    "executable_signature[linux_program]": [
+      [
+        "red",
+        "layout.disguised_executable",
+        "files/wp-content/uploads/2025/12/picture-linux_program.png"
+      ]
+    ],
+    "executable_signature[script]": [
+      [
+        "red",
+        "layout.disguised_executable",
+        "files/wp-content/uploads/2025/12/picture-script.png"
+      ]
+    ],
+    "executable_signature[java_or_macos_program]": [
+      [
+        "red",
+        "layout.disguised_executable",
+        "files/wp-content/uploads/2025/12/picture-java_or_macos_program.png"
+      ]
+    ],
+    "executable_signature[macos_program]": [
+      [
+        "red",
+        "layout.disguised_executable",
+        "files/wp-content/uploads/2025/12/picture-macos_program.png"
+      ]
+    ],
+    "executable_signature[windows_shortcut]": [
+      [
+        "red",
+        "layout.disguised_executable",
+        "files/wp-content/uploads/2025/12/picture-windows_shortcut.png"
+      ]
+    ]
+  }
+}

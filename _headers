@@ -1,0 +1,19 @@
+# Cloudflare Pages header rules. tests/serve.py applies the same file, so the tests run
+# against the policy that ships.
+
+# The page may load its own files, talk to three hosts and nothing else. Trusted Types make
+# the browser itself refuse any text inserted as markup.
+/
+  Content-Security-Policy: default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self'; font-src 'self'; worker-src 'self'; connect-src https://api.wordpress.org https://downloads.wordpress.org https://www.wpvulnerability.net; base-uri 'none'; form-action 'none'; frame-ancestors 'none'; require-trusted-types-for 'script'; trusted-types wp-backup-scanner
+  X-Content-Type-Options: nosniff
+  Referrer-Policy: no-referrer
+
+# A worker takes its policy from the response of its own script. The code that reads the
+# visitor's file gets no network at all.
+/scanner/*
+  Content-Security-Policy: default-src 'none'; script-src 'self'; connect-src 'none'
+  X-Content-Type-Options: nosniff
+  Cache-Control: public, max-age=0, must-revalidate
+
+/harness.css
+  X-Content-Type-Options: nosniff

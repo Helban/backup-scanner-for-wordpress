@@ -513,6 +513,46 @@ CODE_MUTATIONS: list[Mutation] = [
         "entry.uncompressedSize > CODE_FILE_LIMIT_BYTES",
         sample("code_past_size_limit"),
     ),
+    # Always-loaded code that the reader gives up on is red; elsewhere it is not checked.
+    Mutation(
+        "always-loaded code past a limit only named as not checked", ENGINE,
+        "  if (scope === 'loaded') {\n    reporter.report('loaded.code_not_read'", "  if (false) {\n    reporter.report('loaded.code_not_read'",
+        (
+            sample("code_past_size_limit"), sample("code_past_token_limit"), sample("code_past_nesting_limit"),
+            sample("always_loaded_code_past_limits"), "test_code_limits.py::test_always_loaded_code_that_takes_too_long_is_red",
+        ),
+    ),
+    Mutation(
+        "every file past a limit red", ENGINE,
+        "  if (scope === 'loaded') {\n    reporter.report('loaded.code_not_read'", "  if (true) {\n    reporter.report('loaded.code_not_read'",
+        (
+            sample("code_past_size_limit_outside_loaded_code"), sample("always_loaded_code_past_limits"),
+            "test_code_limits.py::test_a_file_that_takes_too_long_is_named_and_the_scan_goes_on",
+        ),
+    ),
+    Mutation(
+        "a file too large to read judged as other code", ENGINE,
+        "readCode(container, { entry, scope: isOnTheList ? 'loaded' : 'unproven' })", "readCode(container, { entry, scope: 'unproven' })",
+        (sample("code_past_size_limit"),),
+    ),
+    Mutation(
+        "a translation file past a limit taken for texts", ENGINE,
+        "if (error instanceof CodeTooLargeError || error instanceof CodeTimeLimitError) return false;",
+        "if (error instanceof CodeTooLargeError || error instanceof CodeTimeLimitError) return true;",
+        (sample("always_loaded_code_past_limits"), "test_code_limits.py::test_always_loaded_code_past_a_limit_stays_listed_for_reading"),
+    ),
+    switch_off(
+        "time limit named as a size limit", ENGINE, "reason === TIME_LIMIT_REASON",
+        "test_code_limits.py::test_a_file_that_takes_too_long_is_named_and_the_scan_goes_on",
+    ),
+    Mutation(
+        "the limit not named on the red finding", ENGINE,
+        "'loaded.code_not_read', entry.name, { bytes: entry.uncompressedSize, reason }", "'loaded.code_not_read', entry.name, { bytes: entry.uncompressedSize }",
+        (
+            "test_code_limits.py::test_the_token_limit_is_named_as_such", "test_code_limits.py::test_the_nesting_limit_is_named_as_such",
+            "test_code_limits.py::test_the_size_limit_is_named_as_such", "test_code_limits.py::test_always_loaded_code_that_takes_too_long_is_red",
+        ),
+    ),
     Mutation(
         "always-loaded files not listed", ENGINE,
         "    if (scope === 'loaded') {\n", "    if (false) {\n",

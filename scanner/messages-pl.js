@@ -192,6 +192,15 @@ const archiveKind = (params) => ARCHIVE_KINDS.get(params.get('kind')) ?? 'niezna
 const sizeOf = (params) => formatBytes(params.get('bytes') ?? 0);
 const filesWord = (count) => plural(count, { one: 'plik', few: 'pliki', many: 'plików' });
 
+// The limit the code reader ran into (loaded.code_not_read).
+const CODE_LIMITS = new Map([
+  ['bytes', 'to więcej niż 8 MB, które ten skaner czyta jako kod'],
+  ['tokens', 'dzieli się na ponad milion kawałków kodu, więcej, niż ten skaner czyta'],
+  ['nesting', 'kod w napisach jest w nim zagnieżdżony głębiej niż na 32 poziomy, a dalej ten skaner nie schodzi'],
+  ['time', 'czytanie go trwało ponad 2 sekundy'],
+]);
+const codeLimit = (params) => CODE_LIMITS.get(params.get('reason')) ?? 'trafił na jeden z limitów tego skanera';
+
 // What a server setting applies to: '*' for every file of the folder, else an extension.
 const configTarget = (params) => (params.get('what') === '*' ? 'każdy plik w tym folderze' : `pliki z końcówką ${params.get('what')}`);
 
@@ -413,6 +422,11 @@ const FINDING_TEXT = new Map([
   ['unproven.char_chain', (params) => `Składa napis po jednym znaku przez chr(), ${inLine(params)}.`],
   ['unproven.creates_admin', (params) => (
     `Zapisuje użytkownika z rolą administratora: ${mechanism(params)}, ${inLine(params)}. Importery i instalatory też to robią, więc przeczytaj, kiedy ten kod działa.`
+  )],
+  ['loaded.code_not_read', (params) => (
+    `${ALWAYS_LOADED} nie dał się przeczytać (plik ma ${sizeOf(params)}): ${codeLimit(params)}. `
+    + 'WordPress uruchamia go sam, niczego nie trzeba włączać w panelu, więc nie wiesz, co ten plik zrobi. '
+    + 'Żaden uczciwy plik tego rodzaju z pomiarów dla tego skanera nie trafił na limit, a plik zbudowany po to, żeby zawiesić skaner, trafia.'
   )],
   ['code.too_large', (params) => {
     if (params.get('reason') === 'tokens') {

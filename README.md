@@ -60,7 +60,8 @@ and fails if the marker shows up in any request
 - Code that WordPress loads by itself: `wp-config.php`, `.maintenance`, mu-plugins, the
   thirteen drop-ins and language files that hold more than texts. The rules are strictest
   there, and every such file is listed on the page for you to read, whatever the rules found.
-  ([details](docs/rules.md#code-that-wordpress-loads-by-itself))
+  Such a file that is too large or too slow to read as code is red, because it would run
+  unread. ([details](docs/rules.md#code-that-wordpress-loads-by-itself))
 - Server settings in `.htaccess`, `.user.ini` and `php.ini`: a picture handed to PHP or run
   as a program, a file prepended to every request, server-side includes switched on, redirects
   to other hosts. ([details](docs/rules.md#server-settings))
@@ -73,8 +74,9 @@ and fails if the marker shows up in any request
 
 Red means do not run this copy until you know what that file is. Amber means read that file.
 "Not checked" is a list of its own: what the scanner could not look at and why (an encrypted
-entry, an archive it does not open, a limit reached). It is never folded into "nothing found",
-and a result with no findings is not shown in green or called clean.
+entry, an archive it does not open, a limit reached). Code that WordPress loads by itself is
+the exception: there a file past a limit is red. "Not checked" is never folded into "nothing
+found", and a result with no findings is not shown in green or called clean.
 
 ## The result
 

@@ -93,6 +93,9 @@ export const RULES = new Map([
   ['unproven.decoder_chain', 'amber'],
   ['unproven.char_chain', 'amber'],
   ['unproven.creates_admin', 'amber'],
+  // A file the reader gave up on (size, tokens, nesting, time): red where WordPress loads it by
+  // itself, not checked elsewhere.
+  ['loaded.code_not_read', 'red'],
   ['code.too_large', 'not_checked'],
   ['code.time_limit', 'not_checked'],
 

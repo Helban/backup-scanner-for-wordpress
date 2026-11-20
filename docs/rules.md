@@ -278,8 +278,10 @@ other: `<? /* ?><?php system('id'); // */` runs `system` only with short tags of
 whose tags could be read both ways is read both ways, and a finding in either reading counts.
 The check against PHP runs under both settings too, on the same 35,771 files.
 
-A PHP file is read up to 8 MB and a million tokens, for at most 2 seconds. Past a limit it
-lands under "Not checked" with the limit named. Files built to slow a scanner down (a million
+A PHP file is read up to 8 MB and a million tokens, for at most 2 seconds, and code inside a
+string is followed 32 levels deep. Past a limit the file lands under "Not checked" with the
+limit named. In code that WordPress loads by itself it is red instead
+([below](#a-file-the-reader-gives-up-on)). Files built to slow a scanner down (a million
 brackets, a string of megabytes, comments with no closing tag after them) are part of the
 tests, and in all three browsers each must finish inside the 2 seconds. Run through the same
 code in Node, none of them took more than 200 ms.
@@ -449,6 +451,25 @@ a file taken for data: text outside the tags is printed into every page, a `<scr
 included. A translation file with anything more in it, such as a call or a string that reads a
 variable, counts like a mu-plugin.
 
+### A file the reader gives up on
+
+A file of this kind that the reader gives up on is red, and the finding names the limit it ran
+into: more than 8 MB, more than a million tokens, code in strings more than 32 levels deep, or
+more than 2 seconds of reading. WordPress runs such a file with nothing to switch on, so "could
+not be read" means you do not know what you would run. Anywhere else the same file only lands
+under "Not checked".
+
+It is not named under "Not checked" as well. The red finding already says that its code was not
+read and why, and a second line for the same file would add one more finding to the count
+without telling you anything new. It stays on the list of files to read, and a translation file
+that cannot be read whole stays there too, since nothing shows that it holds texts only.
+
+Honest files of this kind do not run into these limits. Measured on 2026-11-20 with the scanner's
+own code: none of the 35,094 PHP files of the test copies and none of the 701 files of the 26
+honest sources of mu-plugins and drop-ins ran into one. 69 of those files are code that
+WordPress loads by itself, and the slowest of them took 17.5 ms. A file built to stall a scanner
+runs into a limit on purpose.
+
 ### How these colours were checked
 
 These colours were checked against 64 honest files of that kind: the drop-ins of 21 plugins
@@ -526,7 +547,9 @@ found". An encrypted entry lands there. So does a 7z, RAR, tar, gzip, bzip2, xz,
 `.wpress` or phar archive (only zip is opened), a zip inside a zip inside the copy, and
 anything past a limit: 64 MB unpacked per nested zip, 512 MB and 60 seconds for all of them,
 200 nested zips, 50,000 entries in one. The finding names the limit. Reading media files
-through has 60 seconds of its own; files it did not reach are counted there too.
+through has 60 seconds of its own; files it did not reach are counted there too. So is PHP the
+reader gives up on, with one exception: in code that WordPress loads by itself such a file is
+red ([why](#a-file-the-reader-gives-up-on)).
 
 A result with no findings is not shown in green and is not called clean.
 

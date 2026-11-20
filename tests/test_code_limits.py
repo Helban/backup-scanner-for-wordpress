@@ -1,7 +1,9 @@
 """Reading PHP as code: what the visitor is shown to read, and the limits that keep a file built
 against the scanner from holding the scan."""
 from conftest import finding_keys
-from samples import CODE_TOKEN_LIMIT, DROP_IN, MU_PLUGIN, OWN_THEME, ROOT, SAMPLES_BY_NAME, code, site
+from samples import (
+    CODE_TOKEN_LIMIT, CORE_TRANSLATION, DROP_IN, LOCALE_FILE, MAINTENANCE_FILE, MU_PLUGIN, OWN_THEME, ROOT, SAMPLES_BY_NAME, code, site,
+)
 from zipcraft import Member, craft_zip
 
 # The clock is read every 1024 steps; with no time left, the first reading stops the file.
@@ -88,8 +90,18 @@ def test_every_always_loaded_file_is_listed_for_reading(scan):
 
 def test_a_file_that_takes_too_long_is_named_and_the_scan_goes_on(scan_patched):
     slow = code("$a = 1;\n" * STEPS_PAST_ONE_CLOCK_READING)
+    report = scan_patched(craft_zip([*site(), Member(OWN_THEME + "functions.php", slow)]), NO_TIME_PER_FILE)
+    assert finding_keys(report) == {("not_checked", "code.time_limit", OWN_THEME + "functions.php")}
+    assert report["completed"] is True
+
+
+def test_always_loaded_code_that_takes_too_long_is_red(scan_patched):
+    """WordPress runs a mu-plugin on every request, so one that could not be read in time is red,
+    with the limit named."""
+    slow = code("$a = 1;\n" * STEPS_PAST_ONE_CLOCK_READING)
     report = scan_patched(craft_zip([*site(), Member(MU_PLUGIN, slow)]), NO_TIME_PER_FILE)
-    assert finding_keys(report) == {("not_checked", "code.time_limit", MU_PLUGIN)}
+    assert finding_keys(report) == {("red", "loaded.code_not_read", MU_PLUGIN)}
+    assert [found["params"]["reason"] for found in report["findings"]] == ["time"]
     assert report["completed"] is True
 
 
@@ -118,6 +130,17 @@ def test_the_token_limit_is_named_as_such(scan):
 def test_the_nesting_limit_is_named_as_such(scan):
     report = scan(SAMPLES_BY_NAME["code_past_nesting_limit"].build())
     assert [found["params"]["reason"] for found in report["findings"]] == ["nesting"]
+
+
+def test_the_size_limit_is_named_as_such(scan):
+    report = scan(SAMPLES_BY_NAME["code_past_size_limit"].build())
+    assert [found["params"]["reason"] for found in report["findings"]] == ["bytes"]
+
+
+def test_always_loaded_code_past_a_limit_stays_listed_for_reading(scan):
+    """Red, and still on the list of files WordPress loads by itself, translation file included."""
+    listed = scan(SAMPLES_BY_NAME["always_loaded_code_past_limits"].build())["loadedCode"]
+    assert {file["path"] for file in listed["files"]} >= {MAINTENANCE_FILE, DROP_IN, LOCALE_FILE, CORE_TRANSLATION}
 
 
 def test_a_finding_names_the_line(scan):

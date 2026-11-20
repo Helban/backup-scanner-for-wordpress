@@ -798,10 +798,19 @@ DUMP_INSTRUCTION = f"INSERT INTO `wp_posts` VALUES (8,1,'<p>{INSTRUCTION}</p>','
 PAYLOAD_NAME = UPLOADS + "product-detail-mockup-soft-blue-background.jpeg"
 
 
-def build_code_past_size_limit() -> bytes:
-    lead = b"<?php\n"
-    packed, sizes = packed_zeros(lead, CODE_FILE_LIMIT_BYTES + 1 - len(lead))
-    return craft_zip([*site(), Member(MU_PLUGIN, packed=packed, local=sizes, central=sizes)])
+def code_past_size_limit(path: str) -> Callable[[], bytes]:
+    def build() -> bytes:
+        lead = b"<?php\n"
+        packed, sizes = packed_zeros(lead, CODE_FILE_LIMIT_BYTES + 1 - len(lead))
+        return craft_zip([*site(), Member(path, packed=packed, local=sizes, central=sizes)])
+
+    return build
+
+
+# Code that splits into more tokens than the reader keeps, and code nested in strings deeper than
+# it follows. Each hits one limit of the reader whatever the file is called.
+PAST_TOKEN_LIMIT = b"<?php\n" + b"(" * (CODE_TOKEN_LIMIT + 2)
+PAST_NESTING_LIMIT = b"<?php\n$deep = " + b'"{$a[' * CODE_NESTING_LIMIT + b'"x"' + b']}"' * CODE_NESTING_LIMIT + b";\n"
 
 
 LAYOUT_MIX = [
@@ -2400,7 +2409,35 @@ SAMPLES: list[Sample] = [
         site_with(Member(UPLOADS + "theme-pack.zip", craft_zip([Member("pack/wp-content/mu-plugins/loader.php", code("exec($target);"))]))),
         frozenset({amber("unproven.launch_call", UPLOADS + "theme-pack.zip" + NESTED + "pack/wp-content/mu-plugins/loader.php")}),
     ),
-    Sample("code_past_size_limit", build_code_past_size_limit, frozenset({unchecked("code.too_large", MU_PLUGIN)})),
+    # A file the reader gives up on is red where WordPress loads it by itself, and only named as
+    # not checked elsewhere.
+    Sample("code_past_size_limit", code_past_size_limit(MU_PLUGIN), frozenset({red("loaded.code_not_read", MU_PLUGIN)})),
+    Sample(
+        "code_past_size_limit_outside_loaded_code", code_past_size_limit(OWN_THEME + "functions.php"),
+        frozenset({unchecked("code.too_large", OWN_THEME + "functions.php")}),
+    ),
+    Sample(
+        # Every kind of code WordPress loads by itself. A translation file that cannot be read is
+        # no file of texts only, so it stays on the list too.
+        "always_loaded_code_past_limits",
+        site_with(
+            Member(MAINTENANCE_FILE, PAST_TOKEN_LIMIT),
+            Member(DROP_IN, PAST_NESTING_LIMIT),
+            Member(LOCALE_FILE, PAST_TOKEN_LIMIT),
+            Member(CORE_TRANSLATION, PAST_NESTING_LIMIT),
+            # The same files below a mu-plugin's subfolder and in a theme are named, not red.
+            Member(MU_PLUGIN_SUBFOLDER_FILE, PAST_NESTING_LIMIT),
+            Member(OWN_THEME + "functions.php", PAST_TOKEN_LIMIT),
+        ),
+        frozenset({
+            red("loaded.code_not_read", MAINTENANCE_FILE),
+            red("loaded.code_not_read", DROP_IN),
+            red("loaded.code_not_read", LOCALE_FILE),
+            red("loaded.code_not_read", CORE_TRANSLATION),
+            unchecked("code.too_large", MU_PLUGIN_SUBFOLDER_FILE),
+            unchecked("code.too_large", OWN_THEME + "functions.php"),
+        }),
+    ),
 
     Sample(
         "double_extensions",
@@ -2587,8 +2624,8 @@ SAMPLES: list[Sample] = [
     ),
     Sample(
         "code_past_token_limit",
-        site_with(Member(MU_PLUGIN, b"<?php\n" + b"(" * (CODE_TOKEN_LIMIT + 2))),
-        frozenset({unchecked("code.too_large", MU_PLUGIN)}),
+        site_with(Member(MU_PLUGIN, PAST_TOKEN_LIMIT)),
+        frozenset({red("loaded.code_not_read", MU_PLUGIN)}),
     ),
     Sample(
         # PHP inside a file that a server hands out as it is. A text file runs only when code
@@ -2692,8 +2729,8 @@ SAMPLES: list[Sample] = [
     Sample(
         # Code in a string in code in a string, deeper than the scanner follows.
         "code_past_nesting_limit",
-        site_with(Member(MU_PLUGIN, b"<?php\n$deep = " + b'"{$a[' * CODE_NESTING_LIMIT + b'"x"' + b']}"' * CODE_NESTING_LIMIT + b";\n")),
-        frozenset({unchecked("code.too_large", MU_PLUGIN)}),
+        site_with(Member(MU_PLUGIN, PAST_NESTING_LIMIT)),
+        frozenset({red("loaded.code_not_read", MU_PLUGIN)}),
     ),
 
     Sample("many_entries", build_many_entries, frozenset()),

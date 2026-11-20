@@ -188,6 +188,15 @@ const programKind = (params) => PROGRAM_KINDS.get(params.get('kind')) ?? 'a prog
 const archiveKind = (params) => ARCHIVE_KINDS.get(params.get('kind')) ?? UNKNOWN_ARCHIVE;
 const sizeOf = (params) => formatBytes(params.get('bytes') ?? 0);
 
+// The limit the code reader ran into (loaded.code_not_read).
+const CODE_LIMITS = new Map([
+  ['bytes', 'that is more than the 8 MB this scanner reads as code'],
+  ['tokens', 'it splits into more than a million pieces of code, more than this scanner reads'],
+  ['nesting', 'it nests code inside strings more than 32 levels deep, deeper than this scanner follows'],
+  ['time', 'reading it took longer than 2 seconds'],
+]);
+const codeLimit = (params) => CODE_LIMITS.get(params.get('reason')) ?? 'it ran into a limit of this scanner';
+
 // What a server setting applies to: '*' for every file of the folder, else an extension.
 const configTarget = (params) => (params.get('what') === '*' ? 'every file in this folder' : `files ending in ${params.get('what')}`);
 
@@ -418,6 +427,11 @@ const FINDING_TEXT = new Map([
   ['unproven.char_chain', (params) => `Spells a string one character at a time with chr(), ${onLine(params)}.`],
   ['unproven.creates_admin', (params) => (
     `Writes a user with the administrator role: ${mechanism(params)} on ${onLine(params)}. Importers and installers do this too, so read when it runs.`
+  )],
+  ['loaded.code_not_read', (params) => (
+    `${ALWAYS_LOADED} (a file of ${sizeOf(params)}) could not be read: ${codeLimit(params)}. `
+    + 'WordPress runs it with nothing to switch on, so what it would do is unknown. '
+    + 'None of the honest files of this kind measured for this scanner ran into a limit; a file built to stall a scanner does.'
   )],
   ['code.too_large', (params) => {
     if (params.get('reason') === 'tokens') {

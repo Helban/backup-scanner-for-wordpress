@@ -1062,9 +1062,11 @@ const checkCode = async (container, site, verified) => {
       lastProgress = now;
       container.progress({ stage: 'php_code', done: position, total: files.length, path: entry.name });
     }
-    const code = await readCode(container, entry);
-    const isLoaded = root !== null && isAlwaysLoaded(entry.name, site) && !isPlainTranslation(container, entry.name, code);
-    const scope = isLoaded ? 'loaded' : 'unproven';
+    // A file that cannot be read is no translation holding only texts, so it keeps the scope
+    // its path gives it.
+    const isOnTheList = root !== null && isAlwaysLoaded(entry.name, site);
+    const code = await readCode(container, { entry, scope: isOnTheList ? 'loaded' : 'unproven' });
+    const scope = isOnTheList && !isPlainTranslation(container, entry.name, code) ? 'loaded' : 'unproven';
     if (scope === 'loaded') {
       const name = code === null ? '' : headerField(code.slice(0, FILE_HEADER_BYTES), 'Plugin Name');
       loaded.push({ path: entry.name, bytes: entry.uncompressedSize, name });
@@ -1318,9 +1320,9 @@ const isAlwaysLoaded = (path, { configFolders, maintenanceFolders, languageFolde
 // The file as text, one character per byte, or null when it cannot be read as a whole. Packed
 // data longer than the declared size explains is refused by readWholeFile as damaged; judged
 // by the packed size here, a 6-byte file was called "6 B, more than 8 MB".
-const readCode = async (container, entry) => {
+const readCode = async (container, { entry, scope }) => {
   if (entry.uncompressedSize > CODE_FILE_LIMIT_BYTES) {
-    container.reporter.report('code.too_large', entry.name, { bytes: entry.uncompressedSize, reason: 'bytes' });
+    reportCodeNotRead(container, { entry, scope }, 'bytes');
     return null;
   }
   const { bytes, failure } = await readWholeFile(container, entry);
@@ -1336,16 +1338,34 @@ const judgeCode = (container, { entry, scope, code }) => {
     signals = findCodeSignals(code, createClock(Math.min(performance.now() + CODE_FILE_TIME_MS, container.deadline)));
   } catch (error) {
     if (error instanceof CodeTooLargeError) {
-      reporter.report('code.too_large', entry.name, { bytes: entry.uncompressedSize, reason: error.reason });
+      reportCodeNotRead(container, { entry, scope }, error.reason);
       return;
     }
     if (!(error instanceof CodeTimeLimitError)) throw error;
     if (performance.now() > container.deadline) throw new TimeLimitError();
-    reporter.report('code.time_limit', entry.name, {});
+    reportCodeNotRead(container, { entry, scope }, TIME_LIMIT_REASON);
     return;
   }
   // One finding per group, the strongest: the visitor reads the file either way.
   for (const [rule, params] of chooseCodeFindings(scope, signals)) reporter.report(rule, entry.name, params);
+};
+
+const TIME_LIMIT_REASON = 'time';
+
+// A file the reader gives up on (`reason`: bytes, tokens, nesting, time). Code WordPress loads by
+// itself runs on every request with nothing to switch on, so there "not read" means not knowing
+// what will run, and it is red: none of the honest always-loaded files measured on 2026-11-20
+// ran into a limit (the slowest took 17.5 ms), while a file built to stall a scanner runs into one
+// on purpose. Elsewhere the file is only named as not checked. The red finding says that its code
+// was not checked, so the file is not named a second time under "Not checked".
+const reportCodeNotRead = ({ reporter }, { entry, scope }, reason) => {
+  if (scope === 'loaded') {
+    reporter.report('loaded.code_not_read', entry.name, { bytes: entry.uncompressedSize, reason });
+  } else if (reason === TIME_LIMIT_REASON) {
+    reporter.report('code.time_limit', entry.name, {});
+  } else {
+    reporter.report('code.too_large', entry.name, { bytes: entry.uncompressedSize, reason });
+  }
 };
 
 const readHead = async ({ source, reporter }, { entry, dataStart }, packed) => {

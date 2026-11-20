@@ -49,6 +49,14 @@ const CORRUPT_REASONS = new Map([
 const CAMPAIGN_TEXT = new Map([
   ['fake_backup_2026_11', 'the fake WordPress backup sent to freelancers in November 2026 (a password stealer posing as a JPEG)'],
 ]);
+// What a listed file was in its campaign (the `role` of indicators.js).
+const KNOWN_FILE_ROLES = new Map([
+  ['payload', 'a file from a known attack'],
+  ['archive', 'the archive from a publicly described attack'],
+]);
+const knownFile = (params) => (
+  `${KNOWN_FILE_ROLES.get(params.get('role')) ?? 'a file from a known attack'}: ${CAMPAIGN_TEXT.get(params.get('campaign')) ?? 'a published campaign'}`
+);
 
 // How the code rules name what they found (php-rules.js). A plain function name is shown as
 // a call, an extension as a file name.
@@ -491,7 +499,10 @@ const FINDING_TEXT = new Map([
     `Holds a sentence aimed at an AI assistant reading the copy ("${params.get('what')}"). What a file says about itself proves nothing; somebody expected an AI to read this.`
   )],
 
-  ['indicator.known_file', (params) => `Byte for byte a file from a known attack: ${CAMPAIGN_TEXT.get(params.get('campaign')) ?? 'a published campaign'}.`],
+  ['indicator.known_file', (params) => `Byte for byte ${knownFile(params)}.`],
+  ['indicator.known_upload', (params) => (
+    `The file you chose is byte for byte ${knownFile(params)}. Do not unpack it or run anything from it.`
+  )],
   ['indicator.known_name', (params) => (
     `Carries the name of a file from a known attack: ${CAMPAIGN_TEXT.get(params.get('campaign')) ?? 'a published campaign'}. The content may differ; read it.`
   )],

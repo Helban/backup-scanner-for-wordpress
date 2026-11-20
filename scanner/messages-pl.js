@@ -46,6 +46,14 @@ const CORRUPT_REASONS = new Map([
 const CAMPAIGN_TEXT = new Map([
   ['fake_backup_2026_11', 'fałszywa kopia WordPressa rozsyłana freelancerom w listopadzie 2026 (złodziej haseł udający JPEG)'],
 ]);
+// What a listed file was in its campaign (the `role` of indicators.js).
+const KNOWN_FILE_ROLES = new Map([
+  ['payload', 'plik ze znanego ataku'],
+  ['archive', 'archiwum z ataku opisanego publicznie'],
+]);
+const knownFile = (params) => (
+  `${KNOWN_FILE_ROLES.get(params.get('role')) ?? 'plik ze znanego ataku'}: ${CAMPAIGN_TEXT.get(params.get('campaign')) ?? 'kampania opisana publicznie'}`
+);
 
 // How the code rules name what they found (php-rules.js).
 const MECHANISMS = new Map([
@@ -486,7 +494,10 @@ const FINDING_TEXT = new Map([
     `Zawiera zdanie skierowane do asystenta AI, który czyta kopię („${params.get('what')}”). To, co plik mówi sam o sobie, niczego nie dowodzi. Ktoś liczył na to, że przeczyta to AI.`
   )],
 
-  ['indicator.known_file', (params) => `Co do bajta plik ze znanego ataku: ${CAMPAIGN_TEXT.get(params.get('campaign')) ?? 'kampania opisana publicznie'}.`],
+  ['indicator.known_file', (params) => `Co do bajta ${knownFile(params)}.`],
+  ['indicator.known_upload', (params) => (
+    `Wybrany przez Ciebie plik jest co do bajta taki sam jak ${knownFile(params)}. Nie rozpakowuj go i niczego z niego nie uruchamiaj.`
+  )],
   ['indicator.known_name', (params) => (
     `Nosi nazwę pliku ze znanego ataku: ${CAMPAIGN_TEXT.get(params.get('campaign')) ?? 'kampania opisana publicznie'}. Zawartość może być inna, więc go przeczytaj.`
   )],

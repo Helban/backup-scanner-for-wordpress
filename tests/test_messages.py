@@ -63,6 +63,7 @@ VARIANTS = {
     ],
     "fields": ["name size", "method encryption checksum"],
     "campaign": ["fake_backup_2026_11", "a_campaign_no_language_knows"],
+    "role": ["payload", "archive", "a_role_no_language_knows"],
     "exampleKind": ["core", "plugin", "theme", ""],
     "error": ["TypeError", None],
     "localName": ["other.php", ""],

@@ -538,7 +538,16 @@ in the copy: the database checks need the site around the dump, its plugins and 
 
 `scanner/indicators.js` lists files from attacks that have been described in public. A file
 of the listed size is hashed with SHA-256, and a match is red. A listed name is amber, because
-renaming costs nothing. The list starts with the attack this scanner was written after.
+renaming costs nothing. The list starts with the attack this scanner was written after: the
+password stealer posing as a JPEG, and the zip it was sent in (89,770,565 bytes, SHA-256
+`49163178…4014245c`, from VirusTotal's report of that hash on 2026-11-20). The zip's name,
+`Archive.zip`, is too common to list.
+
+Every entry of the copy of a listed size is hashed, whatever it is, so a zip lying in the copy is
+compared before it is opened, and so is a zip inside that zip, which is never opened. The file
+you choose on the page is checked too: when its size is a listed one, the whole file is hashed,
+and a match is a red finding about the whole copy that says which file of the attack it is. A
+file of any other size is not read a second time, so a copy of 2 GB is never hashed.
 
 ## What it says when it could not look
 

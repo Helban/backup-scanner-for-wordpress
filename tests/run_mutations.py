@@ -245,7 +245,43 @@ STEP_3_MUTATIONS: list[Mutation] = [
     ),
     switch_off("text files read for instructions", ENGINE, "TEXT_EXTENSIONS.has(extension)", sample("ai_instructions")),
     switch_off("known name", ENGINE, "known !== null", sample("known_names")),
-    switch_off("known file", ENGINE, "known", "test_indicators.py::test_a_known_file_is_red_by_its_content"),
+    Mutation(
+        "known file", ENGINE,
+        "if (known) container.reporter.report('indicator.known_file'", "if (false) container.reporter.report('indicator.known_file'",
+        ("test_indicators.py::test_a_known_file_is_red_by_its_content", "test_indicators.py::test_the_known_archive_lying_in_the_copy_is_red"),
+    ),
+    # The file the visitor chose, compared with the list (the campaign's archive).
+    Mutation(
+        "chosen file not compared with the known files", ENGINE, "    await checkChosenFile(source, reporter);\n", "",
+        ("test_indicators.py::test_the_known_archive_chosen_on_the_page_is_red",),
+    ),
+    Mutation(
+        "chosen file known but not reported", ENGINE,
+        "if (known) reporter.report('indicator.known_upload'", "if (false) reporter.report('indicator.known_upload'",
+        ("test_indicators.py::test_the_known_archive_chosen_on_the_page_is_red",),
+    ),
+    Mutation(
+        "chosen file of any size read whole", ENGINE, "  if (!KNOWN_SIZES.has(source.blob.size)) return;\n", "",
+        ("test_indicators.py::test_only_a_chosen_file_of_a_listed_size_is_read_whole",),
+    ),
+    Mutation(
+        "known file matched by its size alone", ENGINE,
+        "row.bytes === bytes.length && row.sha256 === digest", "row.bytes === bytes.length",
+        (
+            "test_indicators.py::test_the_same_size_with_other_content_is_not_known",
+            "test_indicators.py::test_a_chosen_file_of_the_known_size_with_other_content_is_not_known",
+        ),
+    ),
+    Mutation(
+        "what a known file was in its campaign not sent", ENGINE,
+        "{ campaign: known.campaign, role: known.role });\n  }\n};", "{ campaign: known.campaign });\n  }\n};",
+        ("test_indicators.py::test_the_known_archive_lying_in_the_copy_is_red",),
+    ),
+    Mutation(
+        "what a chosen known file was not sent", ENGINE,
+        "'indicator.known_upload', '', { campaign: known.campaign, role: known.role }", "'indicator.known_upload', '', { campaign: known.campaign }",
+        ("test_indicators.py::test_the_known_archive_chosen_on_the_page_is_red",),
+    ),
 ]
 
 CODE_MUTATIONS: list[Mutation] = [

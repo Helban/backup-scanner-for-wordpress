@@ -68,7 +68,9 @@ and fails if the marker shows up in any request
 - The database dump: `eval` of `base64_decode`, PHP kept by snippet plugins, scripts loaded
   from other hosts, text written for an AI assistant that reads the copy.
   ([details](docs/rules.md#the-database))
-- Files from attacks described in public, matched by SHA-256 (`scanner/indicators.js`).
+- Files from attacks described in public, matched by SHA-256 (`scanner/indicators.js`). The
+  zip the original attack was sent in is on the list too, found in the copy or as the file you
+  drop on the page. ([details](docs/rules.md#known-attacks))
 
 ## What the colours mean
 

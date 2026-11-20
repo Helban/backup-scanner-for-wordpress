@@ -14,7 +14,7 @@ COVERED_IN_PAGE_BEHAVIOUR = {"scan.stalled", "scan.failed"}
 # test_nested_limits.py), or with the table of known files pointed at an inert sample
 # (test_indicators.py): the real row is the hash of a password stealer, and no such file is
 # ever built here.
-COVERED_BY_PATCHED_SCANNER = {"code.time_limit", "archive.tail_not_checked", "indicator.known_file"}
+COVERED_BY_PATCHED_SCANNER = {"code.time_limit", "archive.tail_not_checked", "indicator.known_file", "indicator.known_upload"}
 
 
 def declared_rules() -> dict[str, str]:

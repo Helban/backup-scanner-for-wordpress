@@ -119,6 +119,8 @@ export const scanArchive = async (file, { emit, lookup, online }) => {
   const source = new ArchiveSource(file);
   let completed = true;
   try {
+    // Before the zip is opened: the file is what it is even when it opens as no zip at all.
+    await checkChosenFile(source, reporter);
     await scanCopy(source, reporter, { emit: names.emit, lookup, online, names });
   } catch (error) {
     completed = false;
@@ -489,20 +491,37 @@ const CONFIG_FINDINGS = new Map([
   ['ssi', 'config.server_side_includes'],
 ]);
 
-// Known attacks, by content: files of exactly the size of a known one are hashed whole.
+// Known attacks, by content: files of exactly the size of a known one are hashed whole. Every
+// entry counts, whatever its kind, so a zip lying in the copy is compared as a file too.
+const KNOWN_SIZES = new Set(KNOWN_FILES.map((known) => known.bytes));
+
 const checkKnownFiles = async (container) => {
-  const sizes = new Set(KNOWN_FILES.map((known) => known.bytes));
   for (const entry of container.archive.entries) {
-    if (entry.isDirectory || !sizes.has(entry.uncompressedSize)) continue;
+    if (entry.isDirectory || !KNOWN_SIZES.has(entry.uncompressedSize)) continue;
     const { bytes, failure } = await readWholeFile(container, entry);
     if (bytes === null) {
       if (failure === DAMAGED) container.reporter.report('entry.corrupt_data', entry.name, { reason: 'indicator' });
       continue;
     }
-    const digest = await sha256Hex(bytes);
-    const known = KNOWN_FILES.find((row) => row.bytes === bytes.length && row.sha256 === digest);
-    if (known) container.reporter.report('indicator.known_file', entry.name, { campaign: known.campaign });
+    const known = await knownFileOf(bytes);
+    if (known) container.reporter.report('indicator.known_file', entry.name, { campaign: known.campaign, role: known.role });
   }
+};
+
+// The file the visitor chose can itself be one of the listed files: a campaign's archive is
+// listed by its hash, and its name is too common to list. Only a file of exactly a listed size is
+// read for that, so a copy of 2 GB is never hashed. The finding is about the whole copy.
+const checkChosenFile = async (source, reporter) => {
+  if (!KNOWN_SIZES.has(source.blob.size)) return;
+  const bytes = new Uint8Array(await source.blob.arrayBuffer());
+  source.bytesRead += bytes.length;
+  const known = await knownFileOf(bytes);
+  if (known) reporter.report('indicator.known_upload', '', { campaign: known.campaign, role: known.role });
+};
+
+const knownFileOf = async (bytes) => {
+  const digest = await sha256Hex(bytes);
+  return KNOWN_FILES.find((row) => row.bytes === bytes.length && row.sha256 === digest) ?? null;
 };
 
 const knownName = (logicalName) => {

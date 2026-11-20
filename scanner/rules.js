@@ -119,6 +119,8 @@ export const RULES = new Map([
 
   // Known attacks (indicators.js).
   ['indicator.known_file', 'red'],
+  // The file the visitor chose is itself a listed file, such as a campaign's archive.
+  ['indicator.known_upload', 'red'],
   ['indicator.known_name', 'amber'],
 
   ['zip.not_a_zip', 'not_checked'],

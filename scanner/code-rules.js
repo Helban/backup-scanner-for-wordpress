@@ -6,7 +6,7 @@
 // reads the table; php-rules.js reads PHP and engine.js reports. A data module and not a JSON file because the worker may
 // load scripts but has no network at all (connect-src 'none'), and a JSON file is a fetch.
 //
-// Where the numbers come from: the honest test copies the README speaks of (WordPress packages
+// Where the numbers come from: the honest test copies docs/rules.md speaks of (WordPress packages
 // from wordpress.org, a Docker install, a site with 30 popular plugins; 35,092 distinct PHP
 // files) and the engine's own runs on them.
 
@@ -144,7 +144,7 @@ export const DOMAIN_LIKE_EXTENSION = 'com';
 //
 // That code was measured on the same day: 64 honest drop-ins and mu-plugins that WordPress
 // loads by itself, from 21 wordpress.org plugins, Bedrock, Kinsta and WordPress VIP (the set the
-// README describes). Batcache's advanced-cache.php runs create_function on its own settings and
+// docs/rules.md describes). Batcache's advanced-cache.php runs create_function on its own settings and
 // the Docker image's wp-config.php runs eval on a setting, so eval_call is amber there as well;
 // the forms that decode something first stay red. No other red signal had an honest hit.
 export const FINDING_GROUPS = [

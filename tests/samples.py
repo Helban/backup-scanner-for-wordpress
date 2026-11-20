@@ -2035,7 +2035,7 @@ SAMPLES: list[Sample] = [
     Sample(
         # An archive written on Windows names its folders with "\". Its wp-config.php and
         # .maintenance are still the ones WordPress runs. Such a copy is not compared with
-        # wordpress.org (a known limit in README), hence the "not WordPress" line.
+        # wordpress.org (a known limit in docs/rules.md), hence the "not WordPress" line.
         "site_named_with_backslashes",
         lambda: craft_zip([
             Member("files\\wp-includes\\version.php", VERSION_PHP),

@@ -805,8 +805,8 @@ const runFoldersOf = ({ coreFolders, contentFolders, keptApart, siteCopy }) => {
 // WordPress on Linux runs, off the list and its red off the page (measured 2026-11-18). "//" and "./" every unpacker flattens alike. A
 // name with "\" still counts in an archive that writes no name with "/", as a Windows tool writes
 // all of them: an unpacker that keeps "\" then makes neither the core's folder nor the file in it.
-// Folders that differ only in letter case are still one folder here (README limit): a tree of
-// every folder to tell them apart took 642 MB for a 6.4 MB zip of deep names.
+// Folders that differ only in letter case are still one folder here (a limit in docs/rules.md):
+// a tree of every folder to tell them apart took 642 MB for a 6.4 MB zip of deep names.
 const blockersOf = (entries) => {
   const writesSlashes = entries.some((entry) => (entry.writtenName ?? entry.name).includes('/'));
   return entries.filter((entry) => isWrittenAlike(entry, writesSlashes));
@@ -1212,7 +1212,7 @@ const isTranslationName = (path) => path.toLowerCase().endsWith(TRANSLATION_ENDI
 // wp-includes/languages is the languages folder only of a site whose wp-content has none
 // (wp_set_lang_dir() in wp-includes/load.php). The wp-content looked at is the one beside the
 // core or, for a core kept apart from its content (keptApartContentOf), the one in the folder
-// above; a site that moves wp-content anywhere else in wp-config.php is a known limit (README).
+// above; a site that moves wp-content anywhere else in wp-config.php is a known limit (docs/rules.md).
 const isInCoreLanguages = (parts, { languageFolders, keptApart }) => {
   const includesAt = parts.findIndex((part) => part.toLowerCase() === CORE_INCLUDES_FOLDER);
   if (includesAt < 0 || parts[includesAt + 1]?.toLowerCase() !== LANGUAGES_FOLDER_NAME) return false;

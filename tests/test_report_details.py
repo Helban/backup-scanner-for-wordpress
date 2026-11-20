@@ -165,7 +165,7 @@ def test_a_red_path_two_files_share_shows_no_hash(scan):
 def test_a_red_file_named_like_an_entry_is_shown_as_written(scan):
     """An entry "./a." lands on "a", and "a » b/./shell.php" on "a » b/shell.php". The finding on
     the second is shown under its own written name, not glued to the written name of the first.
-    The folder "a » b/" it lies in is no entry, and is read as a name inside "a" (README limit)."""
+    The folder "a » b/" it lies in is no entry, and is read as a name inside "a" (a limit in docs/rules.md)."""
     report = scan(craft_zip([*site(), Member("./a.", JPEG), Member("a » b/./shell.php", code("shell_exec($target);"))]))
     assert ("unproven.launch_call", "a » b/./shell.php") in rule_paths(report)
 

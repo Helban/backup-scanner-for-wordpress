@@ -30,7 +30,6 @@ const FLAG_HEADER_CRC = 0x02;
 const FLAG_EXTRA = 0x04;
 const FLAG_NAME = 0x08;
 const FLAG_COMMENT = 0x10;
-const FLAGS_RESERVED = 0xe0;
 const FIXED_HEADER_BYTES = 10;
 
 const LENGTH_BASE = [3, 4, 5, 6, 7, 8, 9, 10, 11, 13, 15, 17, 19, 23, 27, 31, 35, 43, 51, 59, 67, 83, 99, 115, 131, 163, 195, 227, 258];
@@ -120,8 +119,8 @@ const RESUMABLE_STATES = new Set([HEADER, BLOCK, STORED, CODES]);
 // `onBytes(view)` gets the unpacked bytes in order and must not keep the view: the buffer
 // behind it is written again. Unpacking stops once more than `limitBytes` came out.
 // finish() returns { state, members, bytes }, state one of:
-//   ended     - every member was whole and its checksum right (zero bytes after the last are
-//               allowed, the way gzip itself allows them)
+//   ended     - every member was whole and its checksum right (zero bytes after a member are
+//               allowed, and a member after them is read, the way Python's gzip reads it)
 //   truncated - the data stops inside a member, or there was none
 //   damaged   - not gzip, a broken code, a wrong checksum or size, other bytes after a member
 //   too_large - the limit was reached; what came out until then was handed over
@@ -242,11 +241,9 @@ export const createGunzip = ({ onBytes, limitBytes, onPoint = null, pointEvery =
       return true;
     }
     if (available < FIXED_HEADER_BYTES) return false;
+    // The reserved flag bits are not looked at: gzip refuses such a member, Python's gzip unpacks
+    // it, and so must the scanner (the third review's z07-z09).
     const flags = input[at + 3];
-    if (flags & FLAGS_RESERVED) {
-      fail('damaged');
-      return true;
-    }
     let end = at + FIXED_HEADER_BYTES;
     if (flags & FLAG_EXTRA) {
       if (end + 2 > input.length) return waitForHeader();
@@ -278,10 +275,13 @@ export const createGunzip = ({ onBytes, limitBytes, onPoint = null, pointEvery =
     return state === OVER;
   };
 
+  // Python's gzip (and so tarfile) reads a member that follows the zeros; gzip itself stops at
+  // them. The scanner reads what the most willing program reads (2026-11-21, the third review's
+  // z15: tarfile wrote a mu-plugin from such a member that the scanner never listed).
   const skipPadding = () => {
     while (at < input.length) {
       if (input[at] !== 0) {
-        fail('damaged');
+        state = HEADER;
         return true;
       }
       at += 1;

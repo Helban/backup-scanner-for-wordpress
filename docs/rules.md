@@ -156,8 +156,9 @@ tools do.
 
 A `.tar` or `.tar.gz` gets every check a zip gets. The first bytes of the file decide what it
 is (`1f 8b` for gzip, a tar header for tar, anything else is read as a zip), so a backup renamed
-to `.jpg` is still read as what it is. A gzip whose first unpacked block is no tar header is read
-as a database dump on its own ([the database](#the-database)).
+to `.jpg` is still read as what it is. A gzip in which no tar header turns up anywhere is read
+as a database dump on its own ([the database](#the-database)); the whole gzip is unpacked before
+that is decided, so a .tar.gz whose first header is damaged stays a .tar.gz.
 
 ### A .tar.gz without unpacking it
 
@@ -178,10 +179,22 @@ the way GNU tar 1.35 and Python's tarfile extract. Where tar programs part ways 
 2026-11-21 with GNU tar 1.35, bsdtar and busybox tar from Alpine, and Python's tarfile), the
 finding says how:
 
-- a header whose checksum is wrong: GNU tar and bsdtar (the `tar.exe` of Windows) skip block by
-  block to the next good header and unpack the files after it, Python's tarfile and busybox tar
-  stop. The scanner lists on like the first two, so those files are checked. The damaged header
-  is red;
+- a header whose checksum or size cannot be read: GNU tar and bsdtar (the `tar.exe` of Windows)
+  skip block by block to the next good header and unpack the files after it, Python's tarfile
+  and busybox tar stop. The scanner lists on like the first two, so those files are checked. The
+  damaged header is red;
+- records in front of a header that the programs read differently. A second review of this
+  scanner (2026-11-21) found nine ways to hide a mu-plugin behind a decoy name there, each
+  measured on all four programs: a pax path after a GNU long name, two pax headers before one
+  file, a global path or size, an empty path, a path holding NUL, a valid record before a
+  malformed one, a length followed by two blanks, a key holding NUL, a long name waiting across a
+  damaged block. The programs disagree among themselves on most of these, so the scanner does
+  not follow one of them: it keeps every name one of them writes the data under and checks the
+  data under each name, so a mu-plugin gets the strict checks whichever program unpacks it. Red
+  (`tar.read_differently`). Where they read a different length of data (a global size, a pax
+  size below 8 GiB, which only a header that cannot hold the size needs), what some of them find
+  after it is not listed, and that is red too. A byte order mark is kept as part of a key, as all
+  four programs keep it;
 - data after a single empty block: GNU tar, bsdtar and Python stop there, busybox tar unpacks
   what follows. Red, and that data is not checked;
 - a link or a folder that declares data: GNU tar and Python read none, and a program that does
@@ -190,10 +203,10 @@ finding says how:
 - two entries with one name: both are checked, and which one ends up on disk depends on the
   program. Red;
 - a pax header whose record lengths are not decimal (`0x29`, `+41`) or whose size is not: GNU
-  tar, bsdtar and busybox tar pass over what is malformed and unpack the file under its own
-  name; Python's tarfile stops at a header with such a length, or refuses the archive when it is
-  the first. The scanner reads the file as the first three do. Red. A header of type `X`, Solaris's name for a pax header, is
-  applied like `x`, as GNU tar, bsdtar and tarfile apply it;
+  tar and busybox apply the records before the malformed one, bsdtar none of them, Python's
+  tarfile stops there or refuses the archive. Red, and the file is checked under each name. A
+  header of type `X`, Solaris's name for a pax header, is applied like `x`, as GNU tar, bsdtar
+  and tarfile apply it;
 - a file that is a tar and a zip at once. Info-ZIP's `unzip` and Python's zipfile find a zip's
   end record near the end of a file and unpack that zip, also when a tar or a .tar.gz lies in
   front of it, while a tar program unpacks the tar. Red. A zip glued behind the tar is not
@@ -589,9 +602,8 @@ A dump is a file named `.sql`, `.sql.gz` or like UpdraftPlus's database file
 whether it is unpacked on the way, not its name: gzip under `.sql` is unpacked, plain text
 under `.sql.gz` is read as it is.
 
-A dump can also be dropped on the page by itself: a gzip that holds no tar (whatever its name,
-told by its first unpacked block), or a plain file named `.sql`, which has no first bytes of its
-own. It gets the same database checks. One of them cannot run without the site's files: whether
+A dump can also be dropped on the page by itself: a gzip in which no tar header turns up
+(whatever its name), or a plain file named `.sql`, which has no first bytes of its own. It gets the same database checks. One of them cannot run without the site's files: whether
 the plugins the dump calls active are in the copy. Instead of a line for every active plugin, the
 report says once that only the dump was checked. The real UpdraftPlus 1.26.16 database file of
 the test site, dropped alone, gives the same two database findings as the whole copy it came

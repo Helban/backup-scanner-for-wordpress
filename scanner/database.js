@@ -235,7 +235,7 @@ export const createDumpReader = () => {
     findScripts(lower, span, found);
     findSiteAddress(lower, span, found);
     // Base64 is case-sensitive, so the runs are read from the text as it is.
-    lineTable = findEncodedFiles(text, span, found, lineTable);
+    lineTable = findEncodedFiles({ text, span, found, lineTable });
     activeList = findActiveList(text, span, found) ?? activeList;
     found.instruction ??= findInstruction(lower.slice(span.from, span.until + LONGEST_INSTRUCTION));
     const keepFrom = Math.max(0, span.until - LOOKBEHIND);
@@ -316,8 +316,8 @@ const findSiteAddress = (lower, span, found) => {
 // backslash. So the search checks the last character of such a stretch first and jumps past any
 // other character it meets, the way a string search skips (Horspool): honest rows, with a
 // space or a quote every few characters, are crossed in steps of up to that length.
-const findEncodedFiles = (text, span, found, lineTable) => {
-  const reading = { text, span, found, lineTable };
+const findEncodedFiles = (reading) => {
+  const { text, span, lineTable } = reading;
   let at = span.from;
   while (at < span.until) {
     const breaker = lastBreakerBefore(text, at, at + ENCODED_MIN_LENGTH);
@@ -446,7 +446,8 @@ const tableOfLine = ({ text, span, lineTable }, lineStart) => {
 };
 
 // The table an INSERT or REPLACE at the start of `head` writes to, the last part of a name with
-// its database in front; '' for any other statement or a name that is not a WordPress table's.
+// its database in front; '' for any other statement or a name of other characters than a
+// table's (letters, digits, _ and $, at most 64).
 const insertedTable = (head) => {
   const statement = INSERT_STATEMENT.exec(head);
   if (statement === null) return '';

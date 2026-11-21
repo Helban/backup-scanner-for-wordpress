@@ -110,6 +110,10 @@ const WAITING = 2;
 const OUTPUT_FULL = 3;
 const FAILED = 4;
 
+// The steps between which the whole state is a handful of numbers, the code tables in use and
+// the last 32 KB of output: a point taken there restarts the unpacking in the middle of a file.
+const RESUMABLE_STATES = new Set([HEADER, BLOCK, STORED, CODES]);
+
 // `onBytes(view)` gets the unpacked bytes in order and must not keep the view: the buffer
 // behind it is written again. Unpacking stops once more than `limitBytes` came out.
 // finish() returns { state, members, bytes }, state one of:
@@ -118,10 +122,18 @@ const FAILED = 4;
 //   truncated - the data stops inside a member, or there was none
 //   damaged   - not gzip, a broken code, a wrong checksum or size, other bytes after a member
 //   too_large - the limit was reached; what came out until then was handed over
-export const createGunzip = ({ onBytes, limitBytes }) => {
+//
+// Random access (a .tar.gz read without holding it unpacked): with `onPoint` and `pointEvery`,
+// a point is handed over each time at least `pointEvery` bytes came out since the last one.
+// `from: point` starts a new unpacking there; its input must then begin at `point.inputOffset`
+// of the packed file, and its output begins at `point.outputOffset`. Byte counts (`bytes`,
+// `limitBytes`) are counted from the start of the file either way.
+export const createGunzip = ({ onBytes, limitBytes, onPoint = null, pointEvery = Infinity, from = null }) => {
   const window = new Uint8Array(WINDOW_BYTES + OUTPUT_BYTES);
   const fullAt = window.length - LONGEST_MATCH;
   let input = new Uint8Array(0);
+  // Where input[0] lies in the packed file.
+  let inputStart = 0;
   let at = 0;
   let bitBuffer = 0;
   let bitCount = 0;
@@ -141,6 +153,7 @@ export const createGunzip = ({ onBytes, limitBytes }) => {
   let storedLeft = 0;
   let literals = FIXED_LITERALS;
   let distances = FIXED_DISTANCES;
+  let lastPointAt = 0;
 
   const fail = (reason) => {
     failure = reason;
@@ -535,18 +548,64 @@ export const createGunzip = ({ onBytes, limitBytes }) => {
     [HEADER]: readHeader, [BLOCK]: readBlockHeader, [STORED]: copyStored, [CODES]: readCodes, [TRAILER]: readTrailer, [PADDING]: skipPadding,
   };
 
+  const producedBytes = () => emittedBytes + (out - emittedAt);
+
+  const takePoint = () => {
+    checkMember();
+    const kept = window.slice(Math.max(memberStart, out - WINDOW_BYTES), out);
+    lastPointAt = producedBytes();
+    onPoint({
+      inputOffset: inputStart + at,
+      outputOffset: lastPointAt,
+      state,
+      bitBuffer,
+      bitCount,
+      window: kept,
+      literals,
+      distances,
+      isFinalBlock,
+      storedLeft,
+      memberCrc,
+      memberBytes,
+      members,
+    });
+  };
+
+  const resumeFrom = (point) => {
+    window.set(point.window, WINDOW_BYTES - point.window.length);
+    out = WINDOW_BYTES;
+    emittedAt = out;
+    checkedAt = out;
+    memberStart = WINDOW_BYTES - point.window.length;
+    inputStart = point.inputOffset;
+    emittedBytes = point.outputOffset;
+    lastPointAt = point.outputOffset;
+    ({ state, bitBuffer, bitCount, literals, distances, isFinalBlock, storedLeft, memberCrc, memberBytes, members } = point);
+  };
+
+  if (from !== null) resumeFrom(from);
+
   const run = () => {
     let moved = true;
-    while (moved && state !== OVER) moved = STEPS[state]();
-    if (state === OVER) emit();
+    while (moved && state !== OVER) {
+      moved = STEPS[state]();
+      if (onPoint !== null && RESUMABLE_STATES.has(state) && producedBytes() - lastPointAt >= pointEvery) takePoint();
+    }
+    // Handed over at the end of every piece, not only when the window fills, so that a reader
+    // waiting for one range gets it as soon as the input covers it.
+    emit();
   };
 
   return {
     push(piece) {
       if (state === OVER) return;
+      inputStart += at;
       input = at < input.length ? concatenate(input.subarray(at), piece) : piece;
       at = 0;
       run();
+    },
+    hasStopped() {
+      return state === OVER;
     },
     finish() {
       if (state !== OVER) run();

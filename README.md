@@ -1,7 +1,7 @@
 # Backup Scanner for WordPress
 
-Checks a WordPress backup zip in the browser before you run the copy on your own computer.
-The file is read in the tab. There is no server to upload it to.
+Checks a WordPress backup (a zip, a .tar or a .tar.gz) in the browser before you run the copy
+on your own computer. The file is read in the tab. There is no server to upload it to.
 
 It exists because of one job offer. A "client" sent a site export and asked for it to be run
 locally. A file in `mu-plugins` renamed a 4.6 MB "JPEG" from uploads to `.exe` and started it.
@@ -46,6 +46,13 @@ and fails if the marker shows up in any request
   disagrees with the table of contents, a second zip in the comment. Names are read the way
   unzip programs write them, so `mu-plugins/./loader.php` is a mu-plugin.
   ([details](docs/rules.md#how-the-zip-itself-is-read))
+- A .tar or .tar.gz gets the same checks as a zip. Its first bytes decide the format, not its
+  name. A .tar.gz is never held unpacked: one pass keeps a resume point every 4 MB and a file is
+  read from the nearest one. Where tar programs disagree on what an archive holds, that is red:
+  a damaged header that GNU tar and bsdtar skip (the files behind it are checked too), data
+  behind a single empty block that busybox tar unpacks, a link that declares data of its own,
+  a file that is a tar and a zip at once.
+  ([details](docs/rules.md#how-a-tar-is-read))
 - Core and plugin files are checked against the official checksums of wordpress.org. A changed
   core or plugin file is red; a file that matches is the official one and its other findings
   are dropped. Backups split into parts, as UpdraftPlus makes them, are
@@ -124,6 +131,9 @@ ones.
   loaded through a variable, is not read as code at all. The mu-plugin is listed either way.
 - A zip behind a compressed media file that unpacks to more than 64 MB. It lands under "Not
   checked".
+- What lies behind a single empty block of a tar. busybox tar unpacks it, the scanner names it
+  red and does not read it. A tar found inside the copy is not opened either, and neither is a
+  .gz other than a database dump: inside the copy only zips are opened.
 
 A zip built on purpose to fool how names and folders are read (a decoy core named so that only
 Windows unpacks it into place, folders that differ only in letter case, entries no unpacker
@@ -167,8 +177,8 @@ every one of those tests on the untouched scanner and stops if any fails there: 
 fails anyway would make every mutation it guards look caught.
 
 `SCANNER_BROWSER=firefox` or `webkit` runs the same suite there. Measured on 2026-11-21 with
-Chromium 151, Firefox 153 and WebKit 26.5: 602 tests pass in all three (the one live test is
-off by default), and 695 of 695 mutations are caught. The same suite can be pointed at a site
+Chromium 151, Firefox 153 and WebKit 26.5: 629 tests pass in all three (the one live test is
+off by default), and 723 of 723 mutations are caught. The same suite can be pointed at a site
 that carries the scanner, with that site's own header rules (`SCANNER_SITE_ROOT`,
 `SCANNER_PAGE_PATH` and `SCANNER_SERVED`, described in `tests/serve.py`); the pages at
 helban.dev are tested that way before a release. The tests never reach wordpress.org or

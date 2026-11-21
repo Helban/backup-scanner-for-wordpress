@@ -150,6 +150,54 @@ one empty file named `wp/wp-config.php.` did that, and the red finding of the re
 it. A name with a backslash still counts in a zip that writes every name that way, as Windows
 tools do.
 
+## How a tar is read
+
+A `.tar` or `.tar.gz` gets every check a zip gets. The first bytes of the file decide what it
+is (`1f 8b` for gzip, a tar header for tar, anything else is read as a zip), so a backup renamed
+to `.jpg` is still read as what it is.
+
+### A .tar.gz without unpacking it
+
+Firefox 153 and WebKit 26.5 keep a Blob in memory however large it is (an 8 GB Blob took 8.9 GB
+of memory in Firefox, measured 2026-11-21), so a .tar.gz is never unpacked into one. A first
+pass unpacks the file once, lists its entries and keeps a resume point of the inflater every
+4 MB of output: where it stands in the packed file and the last 32 KB it wrote, about 8 MB of
+memory per GB of archive. A file is then read by unpacking from the nearest point before it.
+The checks read files mostly in the order they lie, so most reads go on from where the last one
+stopped. The inflater is the scanner's own (`scanner/gunzip.js`). From each of 8,943 points in
+262 test streams it gives the same bytes as unpacking from the start. An archive that unpacks to
+more than 16 GB is checked up to there and said to be cut.
+
+### Headers
+
+The reader takes v7, POSIX ustar, GNU (long names, base-256 sizes) and pax headers, and decides
+the way GNU tar 1.35 and Python's tarfile extract. Where tar programs part ways (measured
+2026-11-21 with GNU tar 1.35, bsdtar and busybox tar from Alpine, and Python's tarfile), the
+finding says how:
+
+- a header whose checksum is wrong: GNU tar and bsdtar (the `tar.exe` of Windows) skip block by
+  block to the next good header and unpack the files after it, Python's tarfile and busybox tar
+  stop. The scanner lists on like the first two, so those files are checked. The damaged header
+  is red;
+- data after a single empty block: GNU tar, bsdtar and Python stop there, busybox tar unpacks
+  what follows. Red, and that data is not checked;
+- a link or a folder that declares data: GNU tar and Python read none, and a program that does
+  would see other files after it. Red;
+- a file whose name ends in a slash: GNU tar makes a folder of it, Python a file. Red;
+- two entries with one name: both are checked, and which one ends up on disk depends on the
+  program. Red;
+- a file that is a tar and a zip at once. Info-ZIP's `unzip` and Python's zipfile find a zip's
+  end record near the end of a file and unpack that zip, also when a tar or a .tar.gz lies in
+  front of it, while a tar program unpacks the tar. Red. A zip glued behind the tar is not
+  checked. A zip that is one of the tar's files but lies within an unzip program's reach of the
+  end is checked as an archive in the copy, by the gentler rules for files inside an archive,
+  while `unzip` given the whole tar writes its files straight to disk; that is red on the zip.
+
+A hard link takes the data of the file it names (the last one of that name before it), so what
+it holds is judged under its own name. A sparse file is listed as not readable. A tar has no
+table of contents to set against its headers, so the space between files is not accounted for
+the way it is in a zip.
+
 ## Comparison with wordpress.org
 
 ### Checksums

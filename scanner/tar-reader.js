@@ -166,6 +166,10 @@ export const createTarIndexer = ({ onEntry, maxEntries }) => {
       if (type === TYPE_FILE) anomalies.push('file_named_as_folder');
       type = TYPE_DIRECTORY;
     }
+    // A copy: the name is a view into the piece of input the header came in, and an entry that
+    // kept the view kept that whole piece (256 KB to 1 MB). Over 58,478 entries that held 1.5 GB
+    // of a 2.6 GB archive in memory until the scan ended (measured 2026-11-21, probe_memory.py).
+    nameBytes = nameBytes.slice();
     const linkBytes = next.linkName ?? globalPax.get('linkpath') ?? fieldBytes(header, LINK_AT, NAME_BYTES);
     const size = next.size ?? sizeField;
     const hasNoData = TYPES_WITHOUT_DATA.has(type);

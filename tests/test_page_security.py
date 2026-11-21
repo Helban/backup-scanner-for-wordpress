@@ -26,7 +26,7 @@ WORKER_SIDE_FILES = (
     "worker.js", "engine.js", "entries.js", "checksums.js", "md5.js", "spark-md5.js", "php-text.js",
     "zip-reader.js", "inflate.js", "gunzip.js", "crc32.js", "signatures.js", "rules.js", "sanitize.js",
     "php-lexer.js", "php-rules.js", "code-rules.js", "config-rules.js", "database.js", "text-rules.js",
-    "indicators.js", "excerpt.js", "program-scan.js",
+    "indicators.js", "excerpt.js", "program-scan.js", "tar-archive.js", "tar-reader.js", "gzip-source.js",
 )
 
 FETCH_OUTCOME = """async (url) => {

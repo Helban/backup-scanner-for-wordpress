@@ -54,7 +54,7 @@ VARIANTS = {
         "format", "depth", "too_large", "too_many_entries", "damaged", "multi_part", "time", "budget_count",
         "budget_size", "budget_time", "no_version", "not_listed", "version_not_listed", "closed", "network",
         "request_limit", "bad_answer", "closure_unknown", "unreadable_entries", "unavailable", "tokens", "nesting",
-        "bytes", "zip64", "other_disk", "out_of_bounds", "no_local_header", "stream", "size", "checksum", "whole",
+        "bytes", "zip64", "other_disk", "out_of_bounds", "no_local_header", "sparse", "link_target_missing", "stream", "size", "checksum", "whole",
         "code", "config", "indicator", "database", "encrypted", "method", "unreachable", "a_reason_no_language_knows",
     ],
     "what": [
@@ -62,6 +62,7 @@ VARIANTS = {
         "expect://", "variable_call", "expression_call", ".exe", "*", "base64",
     ],
     "fields": ["name size", "method encryption checksum"],
+    "zip_place": ["outside", "near_end", "a_place_no_language_knows"],
     "campaign": ["fake_backup_2026_11", "a_campaign_no_language_knows"],
     "role": ["payload", "archive", "a_role_no_language_knows"],
     "exampleKind": ["core", "plugin", "theme", ""],

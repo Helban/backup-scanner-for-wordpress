@@ -22,6 +22,7 @@ export const isReadable = (entry) => !entry.unreadable && !entry.isEncrypted && 
 // The entry's local header and the first `wantPacked` bytes of its data. `readAhead` is how
 // much of the file the source window may take in on the way, for the entries that follow.
 export const locateData = async ({ source, archive }, entry, { wantPacked, readAhead }) => {
+  if (archive.format === 'tar') return locateTarData(source, entry, { wantPacked, readAhead });
   const room = archive.directoryStart - entry.headerOffset;
   if (room < LOCAL_HEADER_BYTES) return { unreadable: 'out_of_bounds' };
   const guess = LOCAL_HEADER_BYTES + entry.nameBytes.length + entry.extraLength + LOCAL_EXTRA_SLACK + wantPacked;
@@ -35,6 +36,16 @@ export const locateData = async ({ source, archive }, entry, { wantPacked, readA
     if (!header.complete) header = parseLocalHeader(bytes, entry);
   }
   return { header, packed: bytes.subarray(header.headerBytes, needed) };
+};
+
+// A tar entry's data starts at headerOffset (tar-archive.js); the reader of the archive already
+// checked each header, so there is nothing to compare here.
+const TAR_HEADER = Object.freeze({ signatureFound: true, headerBytes: 0, complete: true, differences: [], localName: '' });
+
+const locateTarData = async (source, entry, { wantPacked, readAhead }) => {
+  if (entry.headerOffset + entry.compressedSize > source.size) return { unreadable: 'out_of_bounds' };
+  const packed = wantPacked === 0 ? new Uint8Array(0) : await source.view(entry.headerOffset, wantPacked, readAhead);
+  return { header: TAR_HEADER, packed };
 };
 
 export const readSmallFile = async (container, entry) => {
@@ -101,7 +112,7 @@ export const streamWholeFile = async (container, entry, consume) => {
   const located = await locateData(container, entry, { wantPacked: 0, readAhead: 0 });
   if (located.unreadable) return UNREACHABLE;
   const dataStart = entry.headerOffset + located.header.headerBytes;
-  let stream = container.source.blob.slice(dataStart, dataStart + entry.compressedSize).stream();
+  let stream = container.source.stream(dataStart, dataStart + entry.compressedSize);
   if (entry.method === METHOD_DEFLATE) stream = stream.pipeThrough(new DecompressionStream('deflate-raw'));
   const reader = stream.getReader();
   let bytes = 0;
@@ -122,7 +133,6 @@ export const streamWholeFile = async (container, entry, consume) => {
     if (!(error instanceof TypeError)) throw error;
     return DAMAGED;
   }
-  container.source.bytesRead += entry.compressedSize;
   return bytes === entry.uncompressedSize ? '' : DAMAGED;
 };
 
@@ -134,10 +144,9 @@ export const TIME = 'time';
 // when the tail came back, DAMAGED as above, or TIME when `deadline` passed first. `dataStart`
 // is where the entry's data begins, behind its local header.
 export const readThrough = async (container, { entry, dataStart }, { tailBytes, deadline, inspect }) => {
-  let stream = container.source.blob.slice(dataStart, dataStart + entry.compressedSize).stream();
+  let stream = container.source.stream(dataStart, dataStart + entry.compressedSize);
   if (entry.method === METHOD_DEFLATE) stream = stream.pipeThrough(new DecompressionStream('deflate-raw'));
   const reader = stream.getReader();
-  container.source.bytesRead += entry.compressedSize;
   // The data a stored file really has; a size that disagrees is a red finding of its own.
   const expectedBytes = entry.method === METHOD_STORED ? entry.compressedSize : entry.uncompressedSize;
   const kept = [];
@@ -184,6 +193,17 @@ export class ArchiveSource {
     this.window = new Uint8Array(0);
     this.windowStart = 0;
     this.bytesRead = 0;
+  }
+
+  get size() {
+    return this.blob.size;
+  }
+
+  // The bytes from `start` to `end` as a stream, read in place. Counted as read when asked for,
+  // whether or not the reader goes to the end. (GzipSource counts the packed bytes it reads.)
+  stream(start, end) {
+    this.bytesRead += end - start;
+    return this.blob.slice(start, end).stream();
   }
 
   async view(offset, length, readAhead) {

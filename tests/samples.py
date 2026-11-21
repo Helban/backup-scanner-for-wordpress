@@ -16,6 +16,7 @@ from wporg import (
     NO_CORE_LIST, NOT_FOUND_WITHOUT_CORS, Answer, core_checksums_url, core_list, plugin_checksums_url, plugin_list,
     plugin_vulnerabilities_url,
 )
+from tarcraft import BLOCK, DIRECTORY, END_MARKER, HARD_LINK, SYMLINK, TarMember, craft_tar, from_zip_members, with_gzip
 from zipcraft import FLAG_ENCRYPTED, STORED, SYMLINK_ATTRIBUTES, Member, craft_zip, deflate, unicode_path_extra
 
 Finding = tuple[str, str, str]
@@ -839,6 +840,26 @@ LAYOUT_MIX = [
     Member(UPLOADS + "vector.svg", b"<svg><?php // inert ?></svg>"),
     Member(UPLOADS + "shell.php", PHP_STATEMENT),
 ]
+
+def tar_site_with(*extra: TarMember, end: bytes = END_MARKER, packed: bool = False) -> Callable[[], bytes]:
+    """The sample site as a .tar (or with `packed`, a .tar.gz), then `extra`, then `end`."""
+    def build() -> bytes:
+        archive = craft_tar([*from_zip_members(site()), *extra], end=end)
+        return with_gzip(archive) if packed else archive
+    return build
+
+
+# Larger than two resume points of the .tar.gz reader (gzip-source.js POINT_EVERY_BYTES, 4 MB),
+# so the code read after it is reached from a point, not from the start.
+LONG_FILM_BYTES = 10 * 1024 * 1024
+LONG_FILM = UPLOADS + "walkthrough.mp4"
+TAR_HIDDEN_PROGRAM = UPLOADS + "behind-damaged-header.jpeg"
+
+
+def long_film_ending_in_php() -> bytes:
+    rows = DUMP_ROWS * (LONG_FILM_BYTES // len(DUMP_ROWS) + 1)
+    return rows[:LONG_FILM_BYTES] + PHP_STATEMENT
+
 
 SAMPLES: list[Sample] = [
     Sample("clean", site_with(), frozenset(), in_reference=True),
@@ -2895,6 +2916,163 @@ SAMPLES: list[Sample] = [
         "table_shorter_than_declared",
         build_table_shorter_than_declared,
         frozenset({red("zip.directory_mismatch"), amber("zip.unlisted_bytes"), red("zip.unlisted_entry")}),
+    ),
+
+    # A .tar and a .tar.gz (tar-archive.js): the same site gives the same findings as its zip, and
+    # what a tar can do that a zip cannot is named. The page gets each under the name backup.zip:
+    # the first bytes decide the format, not the name.
+    Sample("tar_clean", tar_site_with(), frozenset()),
+    Sample("tar_gz_clean", tar_site_with(packed=True), frozenset()),
+    Sample(
+        "tar_gz_dropper",
+        tar_site_with(
+            TarMember(ROOT + "wp-content/mu-plugins/custom-fields-handler.php", b"<?php // would rename and run the 'photo'\n"),
+            TarMember(UPLOADS + "product-detail-mockup.jpeg", PROGRAM),
+            packed=True,
+        ),
+        frozenset({
+            red("layout.disguised_executable", UPLOADS + "product-detail-mockup.jpeg"),
+            amber("indicator.known_name", ROOT + "wp-content/mu-plugins/custom-fields-handler.php"),
+        }),
+    ),
+    Sample(
+        # The end of the film is read through (PHP behind media), and the mu-plugin after it is read
+        # whole later, from a resume point past the start.
+        "tar_gz_reads_past_resume_points",
+        tar_site_with(
+            TarMember(LONG_FILM, long_film_ending_in_php()),
+            TarMember(MU_PLUGIN, code("exec($target);")),
+            packed=True,
+        ),
+        frozenset({red("layout.php_in_media", LONG_FILM), red("loaded.launch_call", MU_PLUGIN)}),
+    ),
+    Sample(
+        # A zip in a .tar exists in place; in a .tar.gz only as it is unpacked, so it is read into
+        # memory, and so is the zip glued behind a picture.
+        "tar_nested_zip",
+        # The file after it puts the zip's end record past the 64 KB an unzip program searches.
+        tar_site_with(
+            TarMember(UPLOADS + "installer.zip", craft_zip([Member("setup.exe", PROGRAM)])),
+            TarMember(UPLOADS + "poster.jpeg", JPEG * 1100),
+        ),
+        frozenset({amber("layout.executable_in_archive", UPLOADS + "installer.zip" + NESTED + "setup.exe")}),
+    ),
+    Sample(
+        # An unzip program given this tar unpacks the zip glued behind it; only the tar is read.
+        "tar_also_a_zip",
+        tar_site_with(end=END_MARKER + craft_zip([Member("setup.exe", PROGRAM)])),
+        frozenset({red("tar.also_a_zip"), amber("tar.data_after_end")}),
+    ),
+    Sample(
+        # Behind a .tar.gz the zip is also what stops the gzip reader.
+        "tar_gz_also_a_zip",
+        lambda: tar_site_with(packed=True)() + craft_zip([Member("setup.exe", PROGRAM)]),
+        frozenset({red("tar.also_a_zip"), unchecked("tar.gzip_damaged")}),
+    ),
+    Sample(
+        # A zip as the tar's last file is found by an unzip program given the whole tar, which
+        # writes setup.exe straight to disk; the scanner judged it only as a file in an archive.
+        "tar_last_file_a_zip",
+        tar_site_with(TarMember(UPLOADS + "installer.zip", craft_zip([Member("setup.exe", PROGRAM)]))),
+        frozenset({
+            red("tar.also_a_zip", UPLOADS + "installer.zip"),
+            amber("layout.executable_in_archive", UPLOADS + "installer.zip" + NESTED + "setup.exe"),
+        }),
+    ),
+    Sample(
+        "tar_gz_nested_zips",
+        tar_site_with(
+            TarMember(UPLOADS + "installer.zip", craft_zip([Member("setup.exe", PROGRAM)])),
+            TarMember(HERO, picture_with_zip(Member("setup.exe", PROGRAM))),
+            packed=True,
+        ),
+        frozenset({
+            amber("layout.executable_in_archive", UPLOADS + "installer.zip" + NESTED + "setup.exe"),
+            red("layout.archive_behind_media", HERO),
+            amber("layout.executable_in_archive", HERO + NESTED + "setup.exe"),
+        }),
+    ),
+    Sample(
+        # A hard link takes its target's data, so what it holds is judged under its own name. One
+        # whose target is not in the archive before it has nothing to read.
+        "tar_hard_links",
+        tar_site_with(
+            TarMember(ROOT + "data/blob", PROGRAM),
+            TarMember(UPLOADS + "photo-copy.jpeg", type_flag=HARD_LINK, link=ROOT + "data/blob"),
+            TarMember(UPLOADS + "lost.jpeg", type_flag=HARD_LINK, link=ROOT + "data/missing"),
+        ),
+        frozenset({
+            red("layout.disguised_executable", ROOT + "data/blob"),
+            red("layout.disguised_executable", UPLOADS + "photo-copy.jpeg"),
+            unchecked("zip.entry_unreadable", UPLOADS + "lost.jpeg"),
+        }),
+    ),
+    Sample(
+        "tar_symlink",
+        tar_site_with(TarMember(UPLOADS + "link.jpg", type_flag=SYMLINK, link="../../../../wp-config.php")),
+        frozenset({red("layout.symlink", UPLOADS + "link.jpg")}),
+    ),
+    Sample(
+        # GNU tar and bsdtar skip a header whose checksum is wrong and unpack what follows, so the
+        # file behind it is checked too.
+        "tar_damaged_header",
+        tar_site_with(
+            TarMember(UPLOADS + "broken.jpeg", JPEG, checksum_shift=1),
+            TarMember(TAR_HIDDEN_PROGRAM, PROGRAM),
+            packed=True,
+        ),
+        frozenset({red("tar.damaged_header"), red("layout.disguised_executable", TAR_HIDDEN_PROGRAM)}),
+    ),
+    Sample(
+        # busybox tar reads past a single zero block; GNU tar, bsdtar and Python stop there.
+        "tar_data_after_lone_end",
+        tar_site_with(end=b"\x00" * BLOCK + craft_tar([TarMember(UPLOADS + "after.jpeg", PROGRAM)])),
+        frozenset({red("tar.data_after_lone_end")}),
+    ),
+    Sample("tar_data_after_end", tar_site_with(end=END_MARKER + b"text after the end"), frozenset({amber("tar.data_after_end")})),
+    Sample(
+        "tar_size_without_data",
+        tar_site_with(TarMember(UPLOADS + "link.jpg", type_flag=SYMLINK, link="photo.jpeg", size_field=f"{BLOCK:011o}\x00".encode())),
+        frozenset({red("tar.size_without_data", UPLOADS + "link.jpg"), red("layout.symlink", UPLOADS + "link.jpg")}),
+    ),
+    Sample(
+        "tar_file_named_as_folder",
+        tar_site_with(TarMember(UPLOADS + "folder/")),
+        frozenset({red("tar.file_named_as_folder", UPLOADS + "folder/")}),
+    ),
+    Sample(
+        "tar_folder_entry",
+        tar_site_with(TarMember(UPLOADS + "folder", type_flag=DIRECTORY)),
+        frozenset(),
+    ),
+    Sample(
+        "tar_duplicate_name",
+        tar_site_with(TarMember(ROOT + "wp-config.php", b"<?php\ndefine('DB_NAME', 'other');\n")),
+        frozenset({red("tar.duplicate_name", ROOT + "wp-config.php")}),
+    ),
+    Sample(
+        # The last file is cut in its data; what of it is missing has nothing to read.
+        "tar_truncated",
+        lambda: craft_tar([*from_zip_members(site()), TarMember(UPLOADS + "cut.jpeg", JPEG * 20)])[:-BLOCK * 3],
+        frozenset({unchecked("tar.truncated"), unchecked("zip.entry_unreadable", UPLOADS + "cut.jpeg")}),
+    ),
+    Sample("tar_no_end", tar_site_with(end=b""), frozenset({unchecked("tar.no_end")})),
+    Sample(
+        "tar_damaged",
+        tar_site_with(TarMember(UPLOADS + "late.jpeg", JPEG, size_field=b"\xff" * 12)),
+        frozenset({unchecked("tar.damaged")}),
+    ),
+    Sample(
+        # The gzip trailer is cut: every file was unpacked, the packing's own check could not run.
+        "tar_gzip_damaged",
+        lambda: tar_site_with(packed=True)()[:-4],
+        frozenset({unchecked("tar.gzip_damaged")}),
+    ),
+    Sample(
+        "tar_gzip_without_tar",
+        lambda: with_gzip(b"INSERT INTO `wp_options` VALUES (1,'active_plugins','a:0:{}','yes');\n" * 20),
+        frozenset({unchecked("tar.not_a_tar")}),
+        completed=False,
     ),
 ]
 

@@ -32,6 +32,14 @@ const UNREADABLE_REASONS = new Map([
   ['other_disk', 'it points to another part of a multi-part archive'],
   ['out_of_bounds', 'its data would lie outside the archive'],
   ['no_local_header', 'there is no file header where the table of contents points'],
+  ['sparse', 'it is a sparse file, whose contents only an unpacking program rebuilds'],
+  ['link_target_missing', 'it is a hard link to a file the archive does not hold before it'],
+]);
+
+// Where the zip of a file that is a tar and a zip at once lies (tar.also_a_zip).
+const ALSO_A_ZIP = new Map([
+  ['outside', 'This file is a tar and a zip at once. A tar program unpacks the tar, an unzip program the zip. Only the tar was checked; the files of the zip were not.'],
+  ['near_end', 'This zip lies so near the end of the tar that an unzip program given the whole tar finds it and unpacks its files straight onto the disk. The scanner checked them only as files inside an archive, by gentler rules.'],
 ]);
 
 const CORRUPT_REASONS = new Map([
@@ -165,7 +173,7 @@ const advisoryExample = (params) => {
 };
 
 const NOT_OPENED_REASONS = new Map([
-  ['format', 'This scanner opens zip archives only, so the contents were not checked.'],
+  ['format', 'Inside the copy this scanner opens zip archives only, so the contents were not checked.'],
   ['depth', 'It sits inside another archive, and only one level is opened.'],
   ['too_large', 'It unpacks to more than 64 MB, so it was not opened.'],
   ['too_many_entries', 'It lists more than 50,000 entries, so it was not opened.'],
@@ -209,7 +217,7 @@ const CODE_UNREADABLE = new Map([
   ['encrypted', 'it is protected with a password'],
   ['method', 'it is packed with a method this scanner does not unpack'],
   ['damaged', 'its packed data is damaged'],
-  ['unreachable', 'the zip holds no data for it where its table of contents points'],
+  ['unreachable', 'the archive holds no data for it that can be read'],
 ]);
 
 // What a server setting applies to: '*' for every file of the folder, else an extension.
@@ -522,7 +530,7 @@ const FINDING_TEXT = new Map([
     `Carries the name of a file from a known attack: ${CAMPAIGN_TEXT.get(params.get('campaign')) ?? 'a published campaign'}. The content may differ; read it.`
   )],
 
-  ['zip.not_a_zip', () => 'This is not a zip archive this scanner can read. Nothing was checked.'],
+  ['zip.not_a_zip', () => 'This is not a zip, tar or tar.gz archive this scanner can read. Nothing was checked.'],
   ['zip.multi_disk', () => 'A multi-part zip. Nothing was checked.'],
   ['zip.directory_unreadable', () => 'The table of contents of the zip is damaged. Nothing was checked.'],
   ['zip.too_many_entries', (params) => (
@@ -566,12 +574,41 @@ const FINDING_TEXT = new Map([
     `Could not be read: ${UNREADABLE_REASONS.get(params.get('reason')) ?? 'unknown reason'}.`
   )],
 
+  ['tar.not_a_tar', () => 'A gzip file that holds no tar archive this scanner can read. Nothing was checked.'],
+  ['tar.too_many_entries', (params) => (
+    `The archive holds more than ${withNoun(params.get('entries') ?? 0, 'entry', 'entries')}, more than this scanner takes. Nothing was checked.`
+  )],
+  ['tar.damaged', (params) => {
+    const entries = params.get('entries') ?? 0;
+    const checked = entries === 1 ? 'Only the entry before it was checked.' : `Only the ${withNoun(entries, 'entry', 'entries')} before it were checked.`;
+    return `A header of the tar cannot be read: its size, a long name or a pax record is damaged. ${checked}`;
+  }],
+  ['tar.truncated', () => 'The tar stops in the middle of a file or a header, so the copy is cut short. What was missing could not be checked.'],
+  ['tar.no_end', () => 'The tar ends without its end marker, so the copy may be cut short. What was missing could not be checked.'],
+  ['tar.gzip_damaged', (params) => (
+    `The gzip packing is damaged after ${formatBytes(params.get('offset') ?? 0)} of unpacked data. Only what came before it was checked.`
+  )],
+  ['tar.gzip_too_large', (params) => `The archive unpacks to more than ${sizeOf(params)}. Only that much was checked.`],
+  ['tar.damaged_header', (params) => (
+    `A damaged header at byte ${formatCount(params.get('offset') ?? 0)}. GNU tar and bsdtar (the tar of Windows) skip it and unpack the files after it; Python's tarfile and busybox tar stop there. The scanner checked the files after it too.`
+  )],
+  ['tar.data_after_lone_end', (params) => (
+    `After a single empty block at byte ${formatCount(params.get('offset') ?? 0)} the archive goes on. GNU tar, bsdtar and Python's tarfile stop there, busybox tar unpacks what follows. Those files were not checked.`
+  )],
+  ['tar.data_after_end', (params) => `Data after the end of the archive, which ends at byte ${formatCount(params.get('offset') ?? 0)}.`],
+  ['tar.size_without_data', () => (
+    'A link or folder entry that declares data of its own. GNU tar and Python\'s tarfile read none, so a program that does read it sees other files after this one.'
+  )],
+  ['tar.file_named_as_folder', () => 'A file entry whose name ends in a slash. GNU tar makes a folder of it, Python\'s tarfile a file.'],
+  ['tar.duplicate_name', () => 'Two entries share this name. Both were checked; which one ends up on disk depends on the program and its settings.'],
+  ['tar.also_a_zip', (params) => ALSO_A_ZIP.get(params.get('zip_place')) ?? ALSO_A_ZIP.get('outside')],
+
   ['entry.corrupt_data', (params) => `Could not be read in full: ${CORRUPT_REASONS.get(params.get('reason')) ?? 'unknown reason'}.`],
   ['entry.head_unreadable', () => 'The first bytes could not be unpacked within the limit.'],
 
   ['scan.not_wordpress', () => 'No wp-includes/version.php, no wp-config.php and no wp-content folder. This does not look like a WordPress copy.'],
   ['scan.content_part', () => (
-    'What this zip holds looks like the inside of wp-content, with no wp-content folder above it. UpdraftPlus saves a backup as several zips like this one: the plugins, the themes, the uploads and the rest, each on its own. The scanner checked this zip as the inside of wp-content and did not see the other zips of the backup, so scan them too.'
+    'What this archive holds looks like the inside of wp-content, with no wp-content folder above it. UpdraftPlus saves a backup as several zips like this: the plugins, the themes, the uploads and the rest, each on its own. The scanner checked this archive as the inside of wp-content and did not see the other parts of the backup, so scan them too.'
   )],
   ['scan.other_wordpress', () => (
     'Another WordPress lies in this folder. One site per scan is compared with wordpress.org, the one nearest the top of the archive; this one was not, and neither were its plugins. Its files are judged as unknown code.'

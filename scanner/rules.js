@@ -145,6 +145,23 @@ export const RULES = new Map([
   ['zip.unsupported_compression', 'not_checked'],
   ['zip.entry_unreadable', 'not_checked'],
 
+  // A .tar or .tar.gz (tar-archive.js). Red where programs that unpack it disagree on what it
+  // holds, measured with GNU tar 1.35, bsdtar, busybox and Python's tarfile.
+  ['tar.not_a_tar', 'not_checked'],
+  ['tar.too_many_entries', 'not_checked'],
+  ['tar.damaged', 'not_checked'],
+  ['tar.truncated', 'not_checked'],
+  ['tar.no_end', 'not_checked'],
+  ['tar.gzip_damaged', 'not_checked'],
+  ['tar.gzip_too_large', 'not_checked'],
+  ['tar.damaged_header', 'red'],
+  ['tar.data_after_lone_end', 'red'],
+  ['tar.size_without_data', 'red'],
+  ['tar.file_named_as_folder', 'red'],
+  ['tar.duplicate_name', 'red'],
+  ['tar.also_a_zip', 'red'],
+  ['tar.data_after_end', 'amber'],
+
   ['entry.corrupt_data', 'not_checked'],
   ['entry.head_unreadable', 'not_checked'],
 

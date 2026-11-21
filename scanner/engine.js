@@ -21,6 +21,8 @@ import { createProgramScanner } from './program-scan.js';
 import { exitsAtOnce, isInertPhp } from './php-text.js';
 import { NESTED_SEPARATOR, RULES } from './rules.js';
 import { deceptiveCharacters } from './sanitize.js';
+import { TarFormatError, openTar } from './tar-archive.js';
+import { looksLikeTar } from './tar-reader.js';
 import { findInstruction } from './text-rules.js';
 import {
   EXECUTABLE_EXTENSIONS, IMAGE_EXTENSIONS, PASSIVE_EXTENSIONS, PHP_EXTENSIONS, SCRIPT_EXTENSIONS, SERVER_SCRIPT_EXTENSIONS,
@@ -116,16 +118,20 @@ export const scanArchive = async (file, { emit, lookup, online }) => {
   const started = performance.now();
   const names = createWrittenNames(emit);
   const reporter = createReporter(names.emit);
-  const source = new ArchiveSource(file);
+  const fileSource = new ArchiveSource(file);
+  // The source the checks read: the file itself, or for a .tar.gz its unpacked bytes.
+  const reading = { source: fileSource };
   let completed = true;
   try {
-    // Before the zip is opened: the file is what it is even when it opens as no zip at all.
-    await checkChosenFile(source, reporter);
-    await scanCopy(source, reporter, { emit: names.emit, lookup, online, names });
+    // Before the archive is opened: the file is what it is even when it opens as no archive at all.
+    await checkChosenFile(fileSource, reporter);
+    await scanCopy(reading, reporter, { emit: names.emit, lookup, online, names });
   } catch (error) {
     completed = false;
     if (error instanceof ZipFormatError) {
       reporter.report(`zip.${error.code}`, '', error.params);
+    } else if (error instanceof TarFormatError) {
+      reporter.report(`tar.${error.code}`, '', error.params);
     } else {
       reporter.report('scan.failed', '', { error: String(error.name), detail: String(error.message) });
     }
@@ -134,14 +140,35 @@ export const scanArchive = async (file, { emit, lookup, online }) => {
   emit({
     type: 'done',
     completed,
-    bytesRead: source.bytesRead,
+    bytesRead: fileSource.bytesRead + (reading.source === fileSource ? 0 : reading.source.bytesRead),
     milliseconds: Math.round(performance.now() - started),
   });
 };
 
-const scanCopy = async (source, reporter, options) => {
+// The first bytes decide the format, not the file's name: a zip, a tar, or a tar packed with gzip.
+const openCopy = async (fileSource, reading, alive) => {
+  const file = fileSource.blob;
+  const first = new Uint8Array(await file.slice(0, TAR_BLOCK_BYTES).arrayBuffer());
+  fileSource.bytesRead += first.length;
+  const packing = first[0] === GZIP_START[0] && first[1] === GZIP_START[1] ? 'gzip' : 'none';
+  if (packing === 'gzip' || looksLikeTar(first)) {
+    const opened = await openTar(file, packing, { maxEntries: MAX_ENTRIES, alive });
+    // A plain .tar is read in place through a source of its own, like a zip.
+    reading.source = packing === 'gzip' ? opened.source : fileSource;
+    if (packing !== 'gzip') fileSource.bytesRead += opened.source.bytesRead;
+    return opened.archive;
+  }
+  return openZip(file, MAX_ENTRIES);
+};
+
+const TAR_BLOCK_BYTES = 512;
+const GZIP_START = [0x1f, 0x8b];
+
+const scanCopy = async (reading, reporter, options) => {
   const { emit, names } = options;
-  const unpacked = asUnpacked(await openZip(source.blob, MAX_ENTRIES));
+  const alive = createHeartbeat(emit);
+  const unpacked = asUnpacked(await openCopy(reading.source, reading, alive));
+  const { source } = reading;
   const part = contentPartOf(unpacked);
   const isPart = part !== null;
   const archive = part ?? unpacked;
@@ -164,7 +191,7 @@ const scanCopy = async (source, reporter, options) => {
     nestedCandidates: [],
     tails: { until: performance.now() + TAIL_TOTAL_TIME_MS, skippedFiles: 0, skippedBytes: 0 },
     progress: (update) => emit({ type: 'progress', ...update }),
-    alive: createHeartbeat(emit),
+    alive,
   };
   const described = describeSite(archive.entries);
   const core = described.versionEntry ? await readCoreIdentity(copy, described.versionEntry) : null;
@@ -647,10 +674,12 @@ const headerField = (header, field) => {
   return match ? match[1].replace(/\s*(?:\*\/|\?>).*/, '').trim() : '';
 };
 
-// The checks that apply to any zip, the copy itself or an archive found inside it.
+// The checks that apply to any archive, the copy itself or a zip found inside it. A problem of
+// the archive's format is reported under that format (zip.*, tar.*).
 const checkContainer = async (container) => {
+  const format = container.archive.format ?? 'zip';
   for (const problem of container.archive.problems) {
-    container.reporter.report(`zip.${problem.code}`, problem.path, problem.params);
+    container.reporter.report(`${format}.${problem.code}`, problem.path, problem.params);
   }
   // Small PHP files in uploads whose content decides: judged when their first bytes are read,
   // and reported unjudged if that never happens.
@@ -996,10 +1025,14 @@ const isInUploads = (logicalName) => {
 const mayBeGuardFile = (entry) => isReadable(entry) && !entry.isSymlink;
 
 // Walks the archive in the order the data lies in the file. That keeps the reads sequential,
-// and it is also how the space between files gets accounted for: every byte before the table
-// of contents has to belong to a listed file, or it is reported.
+// and in a zip it is also how the space between files gets accounted for: every byte before the
+// table of contents has to belong to a listed file, or it is reported. A tar has no table to
+// disagree with its headers (the space between files is those headers, and hard links share
+// their target's data); what a lister and an extractor see differently there is the tar
+// reader's to say (tar-archive.js).
 const checkFirstBytes = async (container) => {
   const { archive, reporter } = container;
+  const accountsForSpace = archive.format !== 'tar';
   const order = archive.entries
     .filter((entry) => !entry.unreadable)
     .sort((left, right) => left.headerOffset - right.headerOffset || left.index - right.index);
@@ -1028,9 +1061,9 @@ const checkFirstBytes = async (container) => {
       continue;
     }
     // Only entries that really have a header here take part in the accounting of space.
-    if (entry.headerOffset < coveredUntil) {
+    if (accountsForSpace && entry.headerOffset < coveredUntil) {
       reporter.report('zip.overlapping_entries', entry.name, {});
-    } else if (entry.headerOffset - coveredUntil > descriptorSlack) {
+    } else if (accountsForSpace && entry.headerOffset - coveredUntil > descriptorSlack) {
       gaps.push({ start: coveredUntil, bytes: entry.headerOffset - coveredUntil });
     }
     if (located.header.differences.length > 0) {
@@ -1051,7 +1084,7 @@ const checkFirstBytes = async (container) => {
     }
   }
 
-  if (archive.directoryStart - coveredUntil > descriptorSlack) {
+  if (accountsForSpace && archive.directoryStart - coveredUntil > descriptorSlack) {
     gaps.push({ start: coveredUntil, bytes: archive.directoryStart - coveredUntil });
   }
   container.progress({ stage: 'first_bytes', done: order.length, total: order.length, path: '' });
@@ -1434,12 +1467,13 @@ const readHead = async ({ source, reporter }, { entry, dataStart }, packed) => {
     isWholeFile = unpacked.state === 'ended';
   }
   // A file small enough to be read whole gets the full check the zip format offers. A stored
-  // file whose two sizes differ has its own finding (zip.stored_size_mismatch).
+  // file whose two sizes differ has its own finding (zip.stored_size_mismatch). A tar entry
+  // carries no checksum of its data (crc32 null).
   if (entry.method === METHOD_DEFLATE && content.length > entry.uncompressedSize) {
     reporter.report('entry.corrupt_data', entry.name, { reason: 'size' });
   } else if (isWholeFile && content.length !== entry.uncompressedSize) {
     reporter.report('entry.corrupt_data', entry.name, { reason: 'size' });
-  } else if (isWholeFile && crc32(content) !== entry.crc32) {
+  } else if (isWholeFile && entry.crc32 !== null && crc32(content) !== entry.crc32) {
     reporter.report('entry.corrupt_data', entry.name, { reason: 'checksum' });
   }
   return content.subarray(0, HEAD_BYTES);
@@ -1610,12 +1644,21 @@ const openNestedArchives = async (copy, emit, verified) => {
 
 // A nested zip stored without compression is read straight from the visitor's file, a slice
 // with no copy in memory. A compressed one has to be unpacked whole, because its table of
-// contents sits at its end; that is what the size limits are for.
+// contents sits at its end; that is what the size limits are for. So does any zip in a .tar.gz,
+// whose bytes exist only as they are unpacked.
 const unpackNested = async (copy, { entry, dataStart }, unpackedBudget) => {
-  const packed = copy.source.blob.slice(dataStart, dataStart + entry.compressedSize);
-  if (entry.method === METHOD_STORED) return { blob: packed, memoryBytes: 0, reason: '' };
+  const isInPlace = copy.source instanceof ArchiveSource;
   // Whatever is left of the total allowance caps this archive too, down to zero.
   const limit = Math.min(NESTED_UNPACKED_LIMIT_BYTES, unpackedBudget);
+  if (entry.method === METHOD_STORED && isInPlace) {
+    return { blob: copy.source.blob.slice(dataStart, dataStart + entry.compressedSize), memoryBytes: 0, reason: '' };
+  }
+  if (entry.method === METHOD_STORED) {
+    if (entry.compressedSize > limit) return { blob: null, memoryBytes: 0, reason: limit < NESTED_UNPACKED_LIMIT_BYTES ? 'budget_size' : 'too_large' };
+    const bytes = await copy.source.collect(dataStart, dataStart + entry.compressedSize);
+    return { blob: new Blob([bytes]), memoryBytes: bytes.length, reason: '' };
+  }
+  const packed = copy.source.blob.slice(dataStart, dataStart + entry.compressedSize);
   const unpacked = await inflateAll(packed, limit);
   if (unpacked.state === 'too_large') {
     const reason = limit < NESTED_UNPACKED_LIMIT_BYTES ? 'budget_size' : 'too_large';

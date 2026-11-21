@@ -252,7 +252,7 @@ STEP_3_MUTATIONS: list[Mutation] = [
     ),
     # The file the visitor chose, compared with the list (the campaign's archive).
     Mutation(
-        "chosen file not compared with the known files", ENGINE, "    await checkChosenFile(source, reporter);\n", "",
+        "chosen file not compared with the known files", ENGINE, "    await checkChosenFile(fileSource, reporter);\n", "",
         ("test_indicators.py::test_the_known_archive_chosen_on_the_page_is_red",),
     ),
     Mutation(
@@ -1061,8 +1061,113 @@ PACKED_DUMP_MUTATIONS: list[Mutation] = [
     ),
 ]
 
+TAR_ARCHIVE = "scanner/tar-archive.js"
+TAR_READER = "scanner/tar-reader.js"
+ENTRIES = "scanner/entries.js"
+TAR_TEST = "test_tar.py::"
+TAR_MUTATIONS: list[Mutation] = [
+    Mutation("tar never opened", ENGINE, "if (packing === 'gzip' || looksLikeTar(first)) {", "if (false) {", (sample("tar_clean"), sample("tar_gz_clean"))),
+    Mutation(
+        "plain tar not told by its first header", ENGINE, "if (packing === 'gzip' || looksLikeTar(first)) {", "if (packing === 'gzip') {",
+        (sample("tar_clean"),),
+    ),
+    Mutation(
+        "damaged tar header ends the listing", TAR_READER,
+        "      if (damagedAt < 0) damagedAt = headerOffset;\n      archiveAnomalies.add('damaged_header');\n",
+        "      stop('damaged');\n", (sample("tar_damaged_header"),),
+    ),
+    Mutation(
+        "damaged tar header not said", TAR_ARCHIVE,
+        "  if (listing.anomalies.includes('damaged_header')) problems.push({ code: 'damaged_header', path: '', params: { offset: listing.damagedAt } });\n",
+        "", (sample("tar_damaged_header"),),
+    ),
+    Mutation(
+        "hard link takes no data", TAR_ARCHIVE, "tarEntry.kind === 'hardlink' ? latestOf.get(tarEntry.linkName) ?? null : tarEntry",
+        "tarEntry", (sample("tar_hard_links"),),
+    ),
+    Mutation("hard link without target reads as empty", TAR_ARCHIVE, "latestOf.get(tarEntry.linkName) ?? null :", "latestOf.get(tarEntry.linkName) ?? tarEntry :", (sample("tar_hard_links"),)),
+    Mutation(
+        "data behind a lone zero block only amber", TAR_ARCHIVE, "const hidesEntries = listing.anomalies.includes('lone_zero_block') && ",
+        "const hidesEntries = false && ", (sample("tar_data_after_lone_end"),),
+    ),
+    Mutation(
+        "data after the tar end not said", TAR_ARCHIVE,
+        "  else if (listing.anomalies.includes('data_after_end')) problems.push({ code: 'data_after_end', path: '', params: { offset: listing.endOffset } });\n",
+        "", (sample("tar_data_after_end"),),
+    ),
+    Mutation(
+        "tar entry anomalies not said", TAR_ARCHIVE,
+        "const ENTRY_PROBLEMS = new Map([['size_without_data', 'size_without_data'], ['file_named_as_folder', 'file_named_as_folder']]);",
+        "const ENTRY_PROBLEMS = new Map();", (sample("tar_size_without_data"), sample("tar_file_named_as_folder")),
+    ),
+    Mutation(
+        "size field of a link taken as its data", TAR_ARCHIVE, "if (data !== null) size = data.readable ? data.storedBytes : data.size;",
+        "if (data !== null) size = data.size;", (sample("tar_size_without_data"),),
+    ),
+    Mutation(
+        "duplicate tar name not said", TAR_ARCHIVE, "if (!isDirectory && seen.has(name)) problems.push(", "if (false) problems.push(",
+        (sample("tar_duplicate_name"),),
+    ),
+    switch_off("truncated tar not said", TAR_ARCHIVE, "!isUnpackingCut && listing.state === 'truncated'", sample("tar_truncated")),
+    switch_off("tar without end marker not said", TAR_ARCHIVE, "!isUnpackingCut && listing.state === 'no_end'", sample("tar_no_end")),
+    switch_off("unreadable tar header not said", TAR_ARCHIVE, "listing.state === 'damaged'", sample("tar_damaged")),
+    Mutation(
+        "damaged gzip around a tar not said", TAR_ARCHIVE, "if (unpacking.state === 'damaged' || unpacking.state === 'truncated') {", "if (false) {",
+        (sample("tar_gzip_damaged"),),
+    ),
+    switch_off("tar.gz past the limit not said", TAR_ARCHIVE, "unpacking.state === 'too_large'", TAR_TEST + "test_unpacking_stops_at_the_limit_and_says_so"),
+    Mutation(
+        "too many tar entries not refused", TAR_ARCHIVE,
+        "  if (listing.state === 'too_many') throw new TarFormatError('too_many_entries', { entries: maxEntries });\n", "",
+        (TAR_TEST + "test_too_many_entries_stop_the_scan",),
+    ),
+    Mutation(
+        "gzip without a tar read as an empty archive", TAR_ARCHIVE,
+        "  if (tarEntries.length === 0 && listing.state !== 'ended') throw new TarFormatError('not_a_tar');\n", "",
+        (sample("tar_gzip_without_tar"),),
+    ),
+    Mutation(
+        "tar data past the end read", ENTRIES,
+        "  if (entry.headerOffset + entry.compressedSize > source.size) return { unreadable: 'out_of_bounds' };\n", "",
+        (sample("tar_truncated"),),
+    ),
+    Mutation("space between tar files accounted for", ENGINE, "const accountsForSpace = archive.format !== 'tar';", "const accountsForSpace = true;", (sample("tar_clean"),)),
+    Mutation(
+        "tar data looked for behind a zip header", ENTRIES,
+        "  if (archive.format === 'tar') return locateTarData(source, entry, { wantPacked, readAhead });\n", "", (sample("tar_clean"),),
+    ),
+    Mutation("checksum compared on tar entries", ENGINE, "isWholeFile && entry.crc32 !== null && crc32(content)", "isWholeFile && crc32(content)", (sample("tar_clean"),)),
+    Mutation(
+        "tar.gz file read through as packed bytes", ENTRIES,
+        "{ tailBytes, deadline, inspect }) => {\n  let stream = container.source.stream(dataStart, dataStart + entry.compressedSize);",
+        "{ tailBytes, deadline, inspect }) => {\n  let stream = container.source.blob.slice(dataStart, dataStart + entry.compressedSize).stream();",
+        (sample("tar_gz_reads_past_resume_points"),),
+    ),
+    Mutation(
+        "zip in a tar.gz sliced from the packed file", ENGINE, "const isInPlace = copy.source instanceof ArchiveSource;", "const isInPlace = true;",
+        (sample("tar_gz_nested_zips"),),
+    ),
+    Mutation(
+        "a file both tar and zip not said", TAR_ARCHIVE, "  if (zipSide !== null) problems.push(", "  if (false) problems.push(",
+        (sample("tar_also_a_zip"), sample("tar_gz_also_a_zip"), sample("tar_last_file_a_zip")),
+    ),
+    Mutation(
+        "zip glued behind a tar.gz not seen", TAR_ARCHIVE, "  if (packing === 'gzip') return '';\n", "  if (packing === 'gzip') return null;\n",
+        (sample("tar_gz_also_a_zip"),),
+    ),
+    Mutation(
+        "zip near the end of the tar taken as harmless", TAR_ARCHIVE, "return holder === undefined ? '' : holder.name;", "return holder === undefined ? '' : null;",
+        (sample("tar_last_file_a_zip"),),
+    ),
+    Mutation(
+        "the name decides the format", ENGINE, "const packing = first[0] === GZIP_START[0]", "const packing = /\\.(gz|tgz)$/.test(file.name) && first[0] === GZIP_START[0]",
+        (TAR_TEST + "test_the_name_does_not_decide_the_format",),
+    ),
+]
+
 MUTATIONS: list[Mutation] = [
     *CODE_MUTATIONS,
+    *TAR_MUTATIONS,
     *STEP_3_MUTATIONS,
     *(
         Mutation(f"signature row removed: {kind}", SIGNATURES, SIGNATURE_ROWS[kind], "", (sample(f"executable_signature[{kind}]"),))
@@ -1357,7 +1462,7 @@ MUTATIONS: list[Mutation] = [
         "      reporter.report('zip.entry_unreadable', entry.name, { reason: located.unreadable });\n", "",
         (sample("row_points_at_no_header"), sample("row_points_outside_archive")),
     ),
-    switch_off("overlapping entries", ENGINE, "entry.headerOffset < coveredUntil", sample("two_rows_one_file")),
+    switch_off("overlapping entries", ENGINE, "accountsForSpace && entry.headerOffset < coveredUntil", sample("two_rows_one_file")),
     Mutation(
         "space between files not accounted for", ENGINE,
         "      gaps.push({ start: coveredUntil, bytes: entry.headerOffset - coveredUntil });\n", "",
@@ -1381,7 +1486,7 @@ MUTATIONS: list[Mutation] = [
         (sample("damaged_packed_data"),),
     ),
     switch_off("unpacked size not compared", ENGINE, "isWholeFile && content.length !== entry.uncompressedSize", sample("unpacked_size_differs")),
-    switch_off("checksum not compared", ENGINE, "isWholeFile && crc32(content) !== entry.crc32", sample("checksum_differs")),
+    switch_off("checksum not compared", ENGINE, "isWholeFile && entry.crc32 !== null && crc32(content) !== entry.crc32", sample("checksum_differs")),
     Mutation(
         "whole files read instead of their first bytes", ENGINE,
         "wantsHead ? Math.min(entry.compressedSize, HEAD_PACKED_BYTES) : 0", "wantsHead ? entry.compressedSize : 0",
@@ -2015,7 +2120,7 @@ MUTATIONS: list[Mutation] = [
     ),
     Mutation(
         "names read as written, not as unpacked", ENGINE,
-        "const unpacked = asUnpacked(await openZip(source.blob, MAX_ENTRIES));", "const unpacked = await openZip(source.blob, MAX_ENTRIES);",
+        "const unpacked = asUnpacked(await openCopy(reading.source, reading, alive));", "const unpacked = await openCopy(reading.source, reading, alive);",
         (sample("always_loaded_code_written_with_dot_segments"), sample("updraftplus_part_written_with_a_dot_folder")),
     ),
     Mutation(

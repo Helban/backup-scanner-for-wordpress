@@ -29,6 +29,14 @@ const UNREADABLE_REASONS = new Map([
   ['other_disk', 'wskazuje na inną część archiwum wieloczęściowego'],
   ['out_of_bounds', 'dane leżałyby poza archiwum'],
   ['no_local_header', 'w miejscu, które wskazuje spis treści, nie ma nagłówka pliku'],
+  ['sparse', 'to plik rzadki, którego treść odtwarza dopiero program rozpakowujący'],
+  ['link_target_missing', 'to twarde dowiązanie do pliku, którego wcześniej w archiwum nie ma'],
+]);
+
+// Where the zip of a file that is a tar and a zip at once lies (tar.also_a_zip).
+const ALSO_A_ZIP = new Map([
+  ['outside', 'Ten plik jest jednocześnie archiwum tar i zipem. Polecenie tar rozpakuje z niego tar, a program do zipów zip. Skaner sprawdził tylko tar, plików z zipa nie.'],
+  ['near_end', 'Ten zip leży tak blisko końca archiwum tar, że program do zipów, któremu dasz całe archiwum, znajdzie go i rozpakuje jego pliki prosto na dysk. Skaner sprawdził je tylko jako pliki w archiwum, łagodniejszymi regułami.'],
 ]);
 
 const CORRUPT_REASONS = new Map([
@@ -182,7 +190,7 @@ const advisoryExample = (params) => {
 };
 
 const NOT_OPENED_REASONS = new Map([
-  ['format', 'Ten skaner otwiera tylko archiwa zip, więc zawartość nie została sprawdzona.'],
+  ['format', 'Wewnątrz kopii ten skaner otwiera tylko archiwa zip, więc zawartość nie została sprawdzona.'],
   ['depth', 'Leży w innym archiwum, a skaner otwiera tylko jeden poziom.'],
   ['too_large', 'Po rozpakowaniu ma ponad 64 MB, więc skaner go nie otworzył.'],
   ['too_many_entries', 'Ma w spisie ponad 50 000 pozycji, więc skaner go nie otworzył.'],
@@ -213,7 +221,7 @@ const CODE_UNREADABLE = new Map([
   ['encrypted', 'jest zabezpieczony hasłem'],
   ['method', 'jest spakowany metodą, której ten skaner nie rozpakowuje'],
   ['damaged', 'jego spakowane dane są uszkodzone'],
-  ['unreachable', 'tam, gdzie wskazuje spis treści zipa, nie ma jego danych'],
+  ['unreachable', 'w archiwum nie ma jego danych, które dałoby się przeczytać'],
 ]);
 
 // What a server setting applies to: '*' for every file of the folder, else an extension.
@@ -517,7 +525,7 @@ const FINDING_TEXT = new Map([
     `Nosi nazwę pliku ze znanego ataku: ${CAMPAIGN_TEXT.get(params.get('campaign')) ?? 'kampania opisana publicznie'}. Zawartość może być inna, więc go przeczytaj.`
   )],
 
-  ['zip.not_a_zip', () => 'To nie jest archiwum zip, które ten skaner umie przeczytać. Nic nie zostało sprawdzone.'],
+  ['zip.not_a_zip', () => 'To nie jest archiwum zip, tar ani tar.gz, które ten skaner umie przeczytać. Nic nie zostało sprawdzone.'],
   ['zip.multi_disk', () => 'Zip wieloczęściowy. Nic nie zostało sprawdzone.'],
   ['zip.directory_unreadable', () => 'Spis treści zipa jest uszkodzony. Nic nie zostało sprawdzone.'],
   ['zip.too_many_entries', (params) => (
@@ -561,12 +569,39 @@ const FINDING_TEXT = new Map([
     `Nie dało się przeczytać: ${UNREADABLE_REASONS.get(params.get('reason')) ?? 'powód nieznany'}.`
   )],
 
+  ['tar.not_a_tar', () => 'Plik gzip, w którym nie ma archiwum tar, które ten skaner umie przeczytać. Nic nie zostało sprawdzone.'],
+  ['tar.too_many_entries', (params) => (
+    `Archiwum ma ponad ${formatCount(params.get('entries') ?? 0)} ${plural(params.get('entries') ?? 0, { one: 'pozycję', few: 'pozycje', many: 'pozycji' })}, więcej, niż ten skaner przyjmuje. Nic nie zostało sprawdzone.`
+  )],
+  ['tar.damaged', (params) => (
+    `Nagłówka w tarze nie da się przeczytać: uszkodzony jest rozmiar, długa nazwa albo rekord pax. Sprawdzono tylko ${formatCount(params.get('entries') ?? 0)} ${plural(params.get('entries') ?? 0, { one: 'pozycję', few: 'pozycje', many: 'pozycji' })} przed nim.`
+  )],
+  ['tar.truncated', () => 'Tar urywa się w środku pliku albo nagłówka, więc kopia jest ucięta. Tego, czego w niej brakuje, nie dało się sprawdzić.'],
+  ['tar.no_end', () => 'Tar kończy się bez znacznika końca, więc kopia może być ucięta. Tego, czego w niej brakuje, nie dało się sprawdzić.'],
+  ['tar.gzip_damaged', (params) => (
+    `Spakowanie gzip jest uszkodzone po ${formatBytes(params.get('offset') ?? 0)} rozpakowanych danych. Sprawdzono tylko to, co było przed uszkodzeniem.`
+  )],
+  ['tar.gzip_too_large', (params) => `Archiwum rozpakowuje się do ponad ${sizeOf(params)}. Sprawdzono tylko tyle.`],
+  ['tar.damaged_header', (params) => (
+    `Uszkodzony nagłówek w bajcie ${formatCount(params.get('offset') ?? 0)}. GNU tar i bsdtar (tar z Windowsa) go pomijają i rozpakowują pliki, które leżą za nim, a tarfile z Pythona i tar z busyboxa na nim się zatrzymują. Skaner sprawdził też pliki za nim.`
+  )],
+  ['tar.data_after_lone_end', (params) => (
+    `Archiwum ciągnie się dalej za pojedynczym pustym blokiem w bajcie ${formatCount(params.get('offset') ?? 0)}. GNU tar, bsdtar i tarfile z Pythona kończą na nim, a tar z busyboxa rozpakowuje to, co leży za nim. Tych plików skaner nie sprawdził.`
+  )],
+  ['tar.data_after_end', (params) => `Za końcem archiwum, który wypada w bajcie ${formatCount(params.get('offset') ?? 0)}, leżą jeszcze dane.`],
+  ['tar.size_without_data', () => (
+    'Dowiązanie albo folder, które deklarują własne dane. GNU tar i tarfile z Pythona nie czytają żadnych, więc program, który je przeczyta, zobaczy za tą pozycją inne pliki.'
+  )],
+  ['tar.file_named_as_folder', () => 'Plik, którego nazwa kończy się ukośnikiem. GNU tar robi z niego folder, a tarfile z Pythona plik.'],
+  ['tar.duplicate_name', () => 'Dwie pozycje mają tę samą nazwę. Skaner sprawdził obie. Od programu i jego ustawień zależy, która trafi na dysk.'],
+  ['tar.also_a_zip', (params) => ALSO_A_ZIP.get(params.get('zip_place')) ?? ALSO_A_ZIP.get('outside')],
+
   ['entry.corrupt_data', (params) => `Nie dało się przeczytać w całości: ${CORRUPT_REASONS.get(params.get('reason')) ?? 'powód nieznany'}.`],
   ['entry.head_unreadable', () => 'Pierwszych bajtów nie dało się rozpakować w ramach limitu.'],
 
   ['scan.not_wordpress', () => 'Nie ma wp-includes/version.php, wp-config.php ani folderu wp-content. To nie wygląda na kopię WordPressa.'],
   ['scan.content_part', () => (
-    'Zawartość tego zipa wygląda jak wnętrze folderu wp-content, ale samego folderu wp-content w nim nie ma. UpdraftPlus zapisuje kopię w kilku takich zipach: osobno wtyczki, motywy, uploads i resztę. Skaner sprawdził ten zip jako wnętrze wp-content i nie widział pozostałych zipów tej kopii, więc zeskanuj je osobno.'
+    'Zawartość tego archiwum wygląda jak wnętrze folderu wp-content, ale samego folderu wp-content w nim nie ma. UpdraftPlus zapisuje kopię w kilku takich zipach: osobno wtyczki, motywy, uploads i resztę. Skaner sprawdził to archiwum jako wnętrze wp-content i nie widział pozostałych części tej kopii, więc zeskanuj je osobno.'
   )],
   ['scan.other_wordpress', () => (
     'W tym folderze leży drugi WordPress. Jeden skan porównuje z wordpress.org jedną stronę, tę najbliżej początku archiwum. Ta nie została porównana, jej wtyczki też nie. Jej pliki są oceniane jak nieznany kod.'

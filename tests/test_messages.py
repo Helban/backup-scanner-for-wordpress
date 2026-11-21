@@ -55,7 +55,7 @@ VARIANTS = {
         "budget_size", "budget_time", "no_version", "not_listed", "version_not_listed", "closed", "network",
         "request_limit", "bad_answer", "closure_unknown", "unreadable_entries", "unavailable", "tokens", "nesting",
         "bytes", "zip64", "other_disk", "out_of_bounds", "no_local_header", "stream", "size", "checksum", "whole",
-        "code", "config", "indicator", "database", "a_reason_no_language_knows",
+        "code", "config", "indicator", "database", "encrypted", "method", "unreachable", "a_reason_no_language_knows",
     ],
     "what": [
         "exec", "backtick", "new_com", "new_dotnet", "ffi", "putenv_loader", "wscript.shell", "shell.application",

@@ -137,6 +137,14 @@ def test_the_size_limit_is_named_as_such(scan):
     assert [found["params"]["reason"] for found in report["findings"]] == ["bytes"]
 
 
+def test_always_loaded_code_never_read_names_why(scan):
+    """Each red finding says why there was nothing to read, and every such file is on the list."""
+    report = scan(SAMPLES_BY_NAME["always_loaded_code_never_read"].build())
+    reasons = {found["path"]: found["params"]["reason"] for found in report["findings"] if found["rule"] == "loaded.code_not_read"}
+    assert reasons == {MU_PLUGIN: "encrypted", DROP_IN: "method", MAINTENANCE_FILE: "damaged", LOCALE_FILE: "unreachable"}
+    assert {file["path"] for file in report["loadedCode"]["files"]} >= set(reasons)
+
+
 def test_always_loaded_code_past_a_limit_stays_listed_for_reading(scan):
     """Red, and still on the list of files WordPress loads by itself, translation file included."""
     listed = scan(SAMPLES_BY_NAME["always_loaded_code_past_limits"].build())["loadedCode"]

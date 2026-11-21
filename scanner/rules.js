@@ -93,7 +93,8 @@ export const RULES = new Map([
   ['unproven.decoder_chain', 'amber'],
   ['unproven.char_chain', 'amber'],
   ['unproven.creates_admin', 'amber'],
-  // A file the reader gave up on (size, tokens, nesting, time): red where WordPress loads it by
+  // A file the reader gave up on (size, tokens, nesting, time) or could not read at all
+  // (encrypted, another packing method, damaged, no data): red where WordPress loads it by
   // itself, not checked elsewhere.
   ['loaded.code_not_read', 'red'],
   ['code.too_large', 'not_checked'],

@@ -204,6 +204,13 @@ const CODE_LIMITS = new Map([
   ['time', 'reading it took longer than 2 seconds'],
 ]);
 const codeLimit = (params) => CODE_LIMITS.get(params.get('reason')) ?? 'it ran into a limit of this scanner';
+// Why there were no bytes to read at all (loaded.code_not_read).
+const CODE_UNREADABLE = new Map([
+  ['encrypted', 'it is protected with a password'],
+  ['method', 'it is packed with a method this scanner does not unpack'],
+  ['damaged', 'its packed data is damaged'],
+  ['unreachable', 'the zip holds no data for it where its table of contents points'],
+]);
 
 // What a server setting applies to: '*' for every file of the folder, else an extension.
 const configTarget = (params) => (params.get('what') === '*' ? 'every file in this folder' : `files ending in ${params.get('what')}`);
@@ -436,11 +443,16 @@ const FINDING_TEXT = new Map([
   ['unproven.creates_admin', (params) => (
     `Writes a user with the administrator role: ${mechanism(params)} on ${onLine(params)}. Importers and installers do this too, so read when it runs.`
   )],
-  ['loaded.code_not_read', (params) => (
-    `${ALWAYS_LOADED} (a file of ${sizeOf(params)}) could not be read: ${codeLimit(params)}. `
-    + 'WordPress runs it with nothing to switch on, so what it would do is unknown. '
-    + 'None of the honest files of this kind measured for this scanner ran into a limit; a file built to stall a scanner does.'
-  )],
+  ['loaded.code_not_read', (params) => {
+    const opening = `${ALWAYS_LOADED} (a file of ${sizeOf(params)}) could not be read: `;
+    const unknown = 'WordPress runs it with nothing to switch on, so what it would do is unknown.';
+    const unreadable = CODE_UNREADABLE.get(params.get('reason'));
+    if (unreadable !== undefined) {
+      return `${opening}${unreadable}. ${unknown} None of the honest copies measured for this scanner holds such a file.`;
+    }
+    return `${opening}${codeLimit(params)}. ${unknown} `
+      + 'None of the honest files of this kind measured for this scanner ran into a limit; a file built to stall a scanner does.';
+  }],
   ['code.too_large', (params) => {
     if (params.get('reason') === 'tokens') {
       return `A PHP file of ${sizeOf(params)} that splits into more than a million pieces of code, more than this scanner reads. Its code was not checked.`;

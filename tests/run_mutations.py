@@ -537,7 +537,7 @@ CODE_MUTATIONS: list[Mutation] = [
         (sample("drop_in_runs_program"),),
     ),
     Mutation(
-        "official files read as code", ENGINE, "isCodeFile(entry) && !verified.has(entry.name)", "isCodeFile(entry)",
+        "official files read as code", ENGINE, "isCodeName(entry) && !verified.has(entry.name)", "isCodeName(entry)",
         (sample("official_code_is_not_judged"),),
     ),
     Mutation(
@@ -580,6 +580,40 @@ CODE_MUTATIONS: list[Mutation] = [
     switch_off(
         "time limit named as a size limit", ENGINE, "reason === TIME_LIMIT_REASON",
         "test_code_limits.py::test_a_file_that_takes_too_long_is_named_and_the_scan_goes_on",
+    ),
+    # Always-loaded code with no bytes to read at all (encrypted, another method, damaged, no data).
+    Mutation(
+        "code that cannot be read kept out of the code reading", ENGINE,
+        ".filter((entry) => isCodeName(entry) && !verified.has(entry.name))", ".filter((entry) => isCodeFile(entry) && !verified.has(entry.name))",
+        (sample("always_loaded_code_never_read"),),
+    ),
+    Mutation(
+        "always-loaded code that cannot be read only named by the zip checks", ENGINE,
+        "  if (scope !== 'loaded') return;\n  reporter.report('loaded.code_not_read'", "  if (true) return;\n  reporter.report('loaded.code_not_read'",
+        (sample("always_loaded_code_never_read"), "test_code_limits.py::test_always_loaded_code_never_read_names_why"),
+    ),
+    Mutation(
+        "any code that cannot be read red", ENGINE,
+        "  if (scope !== 'loaded') return;\n  reporter.report('loaded.code_not_read'", "  if (false) return;\n  reporter.report('loaded.code_not_read'",
+        (sample("always_loaded_code_never_read"),),
+    ),
+    Mutation(
+        "damaged or missing data of always-loaded code not red", ENGINE,
+        "  reportLoadedUnreadable(container, { entry, scope }, failure);\n", "",
+        (sample("always_loaded_code_never_read"),),
+    ),
+    Mutation(
+        "encryption not named as the reason", ENGINE, "  if (entry.isEncrypted) return 'encrypted';\n", "",
+        ("test_code_limits.py::test_always_loaded_code_never_read_names_why",),
+    ),
+    Mutation(
+        "packing method not named as the reason", ENGINE, "  if (!isSupportedMethod(entry)) return 'method';\n", "",
+        ("test_code_limits.py::test_always_loaded_code_never_read_names_why",),
+    ),
+    Mutation(
+        "damage not named as the reason", ENGINE,
+        "return failure === DAMAGED ? 'damaged' : 'unreachable';", "return 'unreachable';",
+        ("test_code_limits.py::test_always_loaded_code_never_read_names_why",),
     ),
     Mutation(
         "the limit not named on the red finding", ENGINE,
@@ -1269,8 +1303,14 @@ MUTATIONS: list[Mutation] = [
         "else if (entry.isEncrypted) reporter.report('zip.encrypted_entry', name, {});", "",
         (sample("encrypted_entry"),),
     ),
-    switch_off("unknown compression method", ENGINE, "!isSupportedMethod(entry)", sample("unsupported_compression")),
-    switch_off("unreadable row", ENGINE, "entry.unreadable", sample("row_needs_missing_64bit_sizes")),
+    Mutation(
+        "unknown compression method", ENGINE,
+        "else if (!isSupportedMethod(entry)) reporter.report", "else if (false) reporter.report", (sample("unsupported_compression"),),
+    ),
+    Mutation(
+        "unreadable row", ENGINE,
+        "if (entry.unreadable) reporter.report", "if (false) reporter.report", (sample("row_needs_missing_64bit_sizes"),),
+    ),
     Mutation(
         "row without a file header not reported", ENGINE,
         "      reporter.report('zip.entry_unreadable', entry.name, { reason: located.unreadable });\n", "",

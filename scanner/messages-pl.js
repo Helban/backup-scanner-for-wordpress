@@ -208,6 +208,13 @@ const CODE_LIMITS = new Map([
   ['time', 'czytanie go trwało ponad 2 sekundy'],
 ]);
 const codeLimit = (params) => CODE_LIMITS.get(params.get('reason')) ?? 'trafił na jeden z limitów tego skanera';
+// Why there were no bytes to read at all (loaded.code_not_read).
+const CODE_UNREADABLE = new Map([
+  ['encrypted', 'jest zabezpieczony hasłem'],
+  ['method', 'jest spakowany metodą, której ten skaner nie rozpakowuje'],
+  ['damaged', 'jego spakowane dane są uszkodzone'],
+  ['unreachable', 'tam, gdzie wskazuje spis treści zipa, nie ma jego danych'],
+]);
 
 // What a server setting applies to: '*' for every file of the folder, else an extension.
 const configTarget = (params) => (params.get('what') === '*' ? 'każdy plik w tym folderze' : `pliki z końcówką ${params.get('what')}`);
@@ -431,11 +438,16 @@ const FINDING_TEXT = new Map([
   ['unproven.creates_admin', (params) => (
     `Zapisuje użytkownika z rolą administratora: ${mechanism(params)}, ${inLine(params)}. Importery i instalatory też to robią, więc przeczytaj, kiedy ten kod działa.`
   )],
-  ['loaded.code_not_read', (params) => (
-    `${ALWAYS_LOADED} nie dał się przeczytać (plik ma ${sizeOf(params)}): ${codeLimit(params)}. `
-    + 'WordPress uruchamia go sam, niczego nie trzeba włączać w panelu, więc nie wiesz, co ten plik zrobi. '
-    + 'Żaden uczciwy plik tego rodzaju z pomiarów dla tego skanera nie trafił na limit, a plik zbudowany po to, żeby zawiesić skaner, trafia.'
-  )],
+  ['loaded.code_not_read', (params) => {
+    const opening = `${ALWAYS_LOADED} nie dał się przeczytać (plik ma ${sizeOf(params)}): `;
+    const unknown = 'WordPress uruchamia go sam, niczego nie trzeba włączać w panelu, więc nie wiesz, co ten plik zrobi.';
+    const unreadable = CODE_UNREADABLE.get(params.get('reason'));
+    if (unreadable !== undefined) {
+      return `${opening}${unreadable}. ${unknown} W żadnej uczciwej kopii z pomiarów dla tego skanera nie ma takiego pliku.`;
+    }
+    return `${opening}${codeLimit(params)}. ${unknown} `
+      + 'Żaden uczciwy plik tego rodzaju z pomiarów dla tego skanera nie trafił na limit, a plik zbudowany po to, żeby zawiesić skaner, trafia.';
+  }],
   ['code.too_large', (params) => {
     if (params.get('reason') === 'tokens') {
       return `Plik PHP (${sizeOf(params)}), który dzieli się na ponad milion kawałków kodu, więcej, niż ten skaner czyta. Kod nie został sprawdzony.`;

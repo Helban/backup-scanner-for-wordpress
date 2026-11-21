@@ -470,6 +470,14 @@ honest sources of mu-plugins and drop-ins ran into one. 69 of those files are co
 WordPress loads by itself, and the slowest of them took 17.5 ms. A file built to stall a scanner
 runs into a limit on purpose.
 
+The same goes for a file of this kind with no bytes to read at all: encrypted, packed with a
+method other than stored and deflate, damaged, or with no data where the zip's table of contents
+points. It is red, the finding says which of the four it is, and it is listed for reading. The zip
+checks name such an entry under "Not checked" as well, for any file of the copy, so that line
+stays beside the red one. On 2026-11-21 none of the 116,642 PHP and `.maintenance` entries of
+the honest test archives, the damaged one included, was any of the four. That copy's damage is
+in its file names, which a tool cut short, not in its data.
+
 ### How these colours were checked
 
 These colours were checked against 64 honest files of that kind: the drop-ins of 21 plugins
@@ -558,7 +566,8 @@ anything past a limit: 64 MB unpacked per nested zip, 512 MB and 60 seconds for 
 200 nested zips, 50,000 entries in one. The finding names the limit. Reading media files
 through has 60 seconds of its own; files it did not reach are counted there too. So is PHP the
 reader gives up on, with one exception: in code that WordPress loads by itself such a file is
-red ([why](#a-file-the-reader-gives-up-on)).
+red, and so is one there that cannot be read at all, an encrypted one included
+([why](#a-file-the-reader-gives-up-on)).
 
 A result with no findings is not shown in green and is not called clean.
 

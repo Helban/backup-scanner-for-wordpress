@@ -1068,8 +1068,10 @@ const checkFirstBytes = async (container) => {
 // those files, for the visitor to read.
 const checkCode = async (container, site, verified) => {
   const { root } = site;
+  // Entries that cannot be read at all come in too: on the list they are red (readCode), and
+  // elsewhere the zip checks have named them already.
   const files = container.archive.entries
-    .filter((entry) => isCodeFile(entry) && !verified.has(entry.name))
+    .filter((entry) => isCodeName(entry) && !verified.has(entry.name))
     .sort((left, right) => left.headerOffset - right.headerOffset);
   const loaded = [];
   const outside = new Map();
@@ -1287,10 +1289,12 @@ const loosePlace = (siteFolder, folder) => {
   return LOOSE_PLACES.get(lower.slice(siteLower.length)) ?? LOOSE_IN_FOLDER;
 };
 
-const isCodeFile = (entry) => (
-  !entry.isDirectory && !entry.isSymlink && isReadable(entry)
+const isCodeName = (entry) => (
+  !entry.isDirectory && !entry.isSymlink
   && (PHP_EXTENSIONS.has(extensionOf(entry.name.replaceAll('\\', '/'))) || isMaintenanceFile(entry.name))
 );
+
+const isCodeFile = (entry) => isCodeName(entry) && isReadable(entry);
 
 // wp-config.php, .maintenance, mu-plugins, the drop-ins (DROP_INS above) and the files of the
 // languages folder (isLanguageFile): the code WordPress loads by itself. The list of every include
@@ -1340,13 +1344,38 @@ const isAlwaysLoaded = (path, { configFolders, maintenanceFolders, languageFolde
 // data longer than the declared size explains is refused by readWholeFile as damaged; judged
 // by the packed size here, a 6-byte file was called "6 B, more than 8 MB".
 const readCode = async (container, { entry, scope }) => {
+  if (!isReadable(entry)) {
+    reportLoadedUnreadable(container, { entry, scope }, '');
+    return null;
+  }
   if (entry.uncompressedSize > CODE_FILE_LIMIT_BYTES) {
     reportCodeNotRead(container, { entry, scope }, 'bytes');
     return null;
   }
   const { bytes, failure } = await readWholeFile(container, entry);
-  if (bytes === null && failure === DAMAGED) container.reporter.report('entry.corrupt_data', entry.name, { reason: 'code' });
-  return bytes === null ? null : new TextDecoder('latin1').decode(bytes);
+  if (bytes !== null) return new TextDecoder('latin1').decode(bytes);
+  if (failure === DAMAGED) container.reporter.report('entry.corrupt_data', entry.name, { reason: 'code' });
+  reportLoadedUnreadable(container, { entry, scope }, failure);
+  return null;
+};
+
+// Code WordPress loads by itself whose bytes cannot be had at all is red for the same reason as a
+// file past a reading limit: whatever an unzip program writes for it would run, and nobody has
+// read it. None of the honest copies measured on 2026-11-21 holds such an entry. The zip checks
+// have already named the entry (encrypted, packed with another method, damaged, no data where
+// the table of contents points), and elsewhere that line is all there is. `failure` is
+// readWholeFile's, '' when the entry was never read.
+const reportLoadedUnreadable = ({ reporter }, { entry, scope }, failure) => {
+  if (scope !== 'loaded') return;
+  reporter.report('loaded.code_not_read', entry.name, { bytes: entry.uncompressedSize, reason: unreadableReason(entry, failure) });
+};
+
+// In the order the zip checks name an entry (checkNames).
+const unreadableReason = (entry, failure) => {
+  if (entry.unreadable) return 'unreachable';
+  if (entry.isEncrypted) return 'encrypted';
+  if (!isSupportedMethod(entry)) return 'method';
+  return failure === DAMAGED ? 'damaged' : 'unreachable';
 };
 
 // `code` is the file's text, one character per byte; `scope` is 'loaded' or 'unproven'.

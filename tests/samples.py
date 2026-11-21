@@ -2413,6 +2413,27 @@ SAMPLES: list[Sample] = [
     # not checked elsewhere.
     Sample("code_past_size_limit", code_past_size_limit(MU_PLUGIN), frozenset({red("loaded.code_not_read", MU_PLUGIN)})),
     Sample(
+        # Code WordPress loads by itself with no bytes to read at all: red beside what the zip
+        # checks say about the entry. The same entries in a theme get the zip checks' line only.
+        "always_loaded_code_never_read",
+        site_with(
+            Member(MU_PLUGIN, PHP_STATEMENT, flags=FLAG_ENCRYPTED),
+            Member(DROP_IN, PHP_STATEMENT, method=93, packed=b"\x28\xb5\x2f\xfd" + PADDING),
+            Member(MAINTENANCE_FILE, PHP_STATEMENT, packed=b"\xff\xff\xff\xff" + PADDING),
+            Member(LOCALE_FILE, PHP_STATEMENT, stored_in_file=False, central={"offset": 7}),
+            Member(OWN_THEME + "locked.php", PHP_STATEMENT, flags=FLAG_ENCRYPTED),
+            Member(OWN_THEME + "damaged.php", PHP_STATEMENT, packed=b"\xff\xff\xff\xff" + PADDING),
+        ),
+        frozenset({
+            red("loaded.code_not_read", MU_PLUGIN), unchecked("zip.encrypted_entry", MU_PLUGIN),
+            red("loaded.code_not_read", DROP_IN), unchecked("zip.unsupported_compression", DROP_IN),
+            red("loaded.code_not_read", MAINTENANCE_FILE), unchecked("entry.corrupt_data", MAINTENANCE_FILE),
+            red("loaded.code_not_read", LOCALE_FILE), unchecked("zip.entry_unreadable", LOCALE_FILE),
+            unchecked("zip.encrypted_entry", OWN_THEME + "locked.php"),
+            unchecked("entry.corrupt_data", OWN_THEME + "damaged.php"),
+        }),
+    ),
+    Sample(
         "code_past_size_limit_outside_loaded_code", code_past_size_limit(OWN_THEME + "functions.php"),
         frozenset({unchecked("code.too_large", OWN_THEME + "functions.php")}),
     ),

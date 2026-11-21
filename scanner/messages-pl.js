@@ -139,7 +139,7 @@ const PACKED_ARCHIVE_NOTE = 'Tego, co z niego wyjdzie, nie ma w żadnym pliku ko
 // table when the dump names one before it, '' when it does not.
 const encodedRow = (params) => {
   const table = String(params.get('table') ?? '');
-  return table === '' ? 'Jeden z wierszy bazy' : `Wiersz tabeli ${table}`;
+  return table === '' ? 'W jednym z wierszy bazy' : `W wierszu tabeli ${table}`;
 };
 
 // Why the files of the core or of a plugin were not compared with wordpress.org. The same
@@ -504,14 +504,14 @@ const FINDING_TEXT = new Map([
 
   ['db.eval_base64', () => 'W bazie leży kod PHP, który wykonuje przez eval tekst zdekodowany z base64. Tak ukrywa się to, co naprawdę się uruchamia.'],
   ['db.encoded_program', (params) => (
-    `${encodedRow(params)} trzyma ${PROGRAM_KINDS.get(params.get('what')) ?? 'program'} zapisany jako tekst base64. ${PACKED_PROGRAM_NOTE}`
+    `${encodedRow(params)} leży ${PROGRAM_KINDS.get(params.get('what')) ?? 'program'} zapisany jako tekst base64. ${PACKED_PROGRAM_NOTE}`
   )],
   ['db.encoded_code', (params) => (
-    `${encodedRow(params)} trzyma kod PHP zapisany jako tekst base64. Żaden plik z kopii go nie pokazuje, `
+    `${encodedRow(params)} leży kod PHP zapisany jako tekst base64. Żaden plik z kopii go nie pokazuje, `
     + 'a uruchomi się dopiero wtedy, gdy inny kod go zdekoduje i wykona. Poszukaj kodu, który czyta ten wiersz.'
   )],
   ['db.encoded_archive', (params) => (
-    `${encodedRow(params)} trzyma archiwum ${ARCHIVE_KINDS.get(params.get('what')) ?? 'nieznanego rodzaju'} zapisane jako tekst base64. ${PACKED_ARCHIVE_NOTE}`
+    `${encodedRow(params)} leży archiwum ${ARCHIVE_KINDS.get(params.get('what')) ?? 'nieznanego rodzaju'} zapisane jako tekst base64. ${PACKED_ARCHIVE_NOTE}`
   )],
   ['db.snippet_rows', () => 'W bazie są zapisane snippety kodu, które strona wykonuje jako PHP. Przeczytaj każdy, zanim uruchomisz kopię.'],
   ['db.snippet_plugin_active', (params) => {

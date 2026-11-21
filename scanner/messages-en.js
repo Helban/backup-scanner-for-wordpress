@@ -513,7 +513,7 @@ const FINDING_TEXT = new Map([
   )],
   ['db.encoded_code', (params) => (
     `${encodedRow(params)} holds PHP code written as base64 text, and no file in the copy shows it. `
-    + 'It runs only if other code decodes it first, so look for the code that reads this row.'
+    + 'It runs only if other code decodes and runs it, so look for the code that reads this row.'
   )],
   ['db.encoded_archive', (params) => (
     `${encodedRow(params)} holds ${ARCHIVE_KINDS.get(params.get('what')) ?? UNKNOWN_ARCHIVE} written as base64 text. ${PACKED_ARCHIVE_NOTE}`

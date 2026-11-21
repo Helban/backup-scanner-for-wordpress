@@ -12,11 +12,14 @@
 
 import { createGunzip } from './gunzip.js';
 
-// A point keeps 32 KB of window: one per 4 MB costs 8 MB of memory per GB of unpacked archive,
-// and a read far from the cursor unpacks 2 MB on average before its first byte.
+// A point keeps 32 KB of window and the code lengths of its block (316 bytes at most): one per
+// 4 MB costs about 8 MB of memory per GB of unpacked archive, and a read far from the cursor
+// unpacks 2 MB on average before its first byte. (Until the second review a point kept the
+// built code tables, up to 288 KB: 24 MB per GB measured, 74 MB per GB at worst.)
 export const POINT_EVERY_BYTES = 4 * 1024 * 1024;
 // Small pieces of input keep how far a cursor runs past the end of a read short.
 const PACKED_PIECE_BYTES = 64 * 1024;
+const SMALLEST_PIECE_BYTES = 1024;
 const INDEX_PIECE_BYTES = 1024 * 1024;
 // What a cursor keeps of its latest output, for a read that starts a little behind it.
 const RECENT_BYTES = 4 * 1024 * 1024;
@@ -101,14 +104,15 @@ export class GzipSource {
     return filled === joined.length ? joined : joined.subarray(0, filled);
   }
 
-  // Copies of the unpacked bytes from `start` to `end`, in order.
+  // The unpacked bytes from `start` to `end`, in order: views of a cursor's own copies, which a
+  // caller must not change.
   async* pieces(start, end) {
     const cursor = this.cursorFor(start);
     let next = start;
     try {
       next = yield* cursor.recentFrom(next, end);
       while (next < end && !cursor.isOver) {
-        const fresh = await this.advance(cursor);
+        const fresh = await this.advance(cursor, end);
         next = yield* overlapOf(fresh, next, end);
       }
     } finally {
@@ -129,10 +133,11 @@ export class GzipSource {
     return new Cursor(point);
   }
 
-  async advance(cursor) {
-    const piece = new Uint8Array(await this.blob.slice(cursor.packedAt, cursor.packedAt + PACKED_PIECE_BYTES).arrayBuffer());
+  // `readEnd` is where the read under way stops: what comes out past it is kept for the next one.
+  async advance(cursor, readEnd) {
+    const piece = new Uint8Array(await this.blob.slice(cursor.packedAt, cursor.packedAt + cursor.pieceBytes).arrayBuffer());
     this.bytesRead += piece.length;
-    return cursor.feed(piece);
+    return cursor.feed(piece, readEnd);
   }
 }
 
@@ -142,6 +147,7 @@ class Cursor {
   constructor(point) {
     this.packedAt = point === null ? 0 : point.inputOffset;
     this.produced = point === null ? 0 : point.outputOffset;
+    this.pieceBytes = PACKED_PIECE_BYTES;
     this.isOver = false;
     this.recent = [];
     this.recentBytes = 0;
@@ -161,8 +167,9 @@ class Cursor {
   }
 
   // The output of one piece of input, also kept as the latest output. An unpacking that stopped
-  // (damaged data) or ran out of input is over.
-  feed(piece) {
+  // (damaged data) or ran out of input is over. Output past `readEnd` is never dropped here: the
+  // next read in order starts there, and dropping it made that read start a new cursor.
+  feed(piece, readEnd) {
     this.packedAt += piece.length;
     if (piece.length === 0) {
       this.gunzip.finish();
@@ -172,11 +179,16 @@ class Cursor {
     this.isOver = piece.length === 0 || this.gunzip.hasStopped();
     const fresh = this.fresh;
     this.fresh = [];
+    // Data that packs better than 64:1 gives more from one piece than the cursor keeps, and the
+    // next read in order then started a new cursor every time (4,777 reads of the packed file
+    // for 20 MB at 134:1, the second Fable review). Smaller pieces keep the output within reach.
+    const freshBytes = fresh.reduce((total, chunk) => total + chunk.bytes.length, 0);
+    if (freshBytes > RECENT_BYTES / 4) this.pieceBytes = Math.max(SMALLEST_PIECE_BYTES, this.pieceBytes >> 1);
     for (const chunk of fresh) {
       this.recent.push(chunk);
       this.recentBytes += chunk.bytes.length;
     }
-    while (this.recent.length > 1 && this.recentBytes - this.recent[0].bytes.length >= RECENT_BYTES) {
+    while (this.recent.length > 1 && this.recentBytes - this.recent[0].bytes.length >= RECENT_BYTES && endOf(this.recent[0]) <= readEnd) {
       this.recentBytes -= this.recent.shift().bytes.length;
     }
     return fresh;
@@ -202,6 +214,8 @@ function* overlapOf(chunks, next, end) {
   }
   return reached;
 }
+
+const endOf = (chunk) => chunk.offset + chunk.bytes.length;
 
 const lastPointAtOrBefore = (points, offset) => {
   let low = 0;

@@ -9,18 +9,20 @@
 
 import { ArchiveSource } from './entries.js';
 import { GzipSource } from './gzip-source.js';
-import { createTarIndexer, looksLikeTar } from './tar-reader.js';
+import { createTarIndexer } from './tar-reader.js';
 import { MAX_ENTRIES, METHOD_STORED, ZipFormatError, openZip } from './zip-reader.js';
 
 // A plain .tar is read whole once to find its headers; its data is not kept.
 const INDEX_PIECE_BYTES = 1024 * 1024;
-const TAR_BLOCK_BYTES = 512;
 // A .tar.gz built to unpack forever (a few MB that unpack to terabytes) is stopped here: the
 // largest honest backup we expect is a few GB, and one unpacking pass of 16 GB takes minutes.
 export const TAR_UNPACKED_LIMIT_BYTES = 16 * 1024 * 1024 * 1024;
 
 // The indexer's anomalies -> the problem codes the checks report as tar.<code>.
-const ENTRY_PROBLEMS = new Map([['size_without_data', 'size_without_data'], ['file_named_as_folder', 'file_named_as_folder']]);
+const ENTRY_PROBLEMS = new Map([
+  ['size_without_data', 'size_without_data'], ['file_named_as_folder', 'file_named_as_folder'],
+  ['size_read_differently', 'size_read_differently'],
+]);
 
 export class TarFormatError extends Error {
   constructor(code, params = {}) {
@@ -32,17 +34,20 @@ export class TarFormatError extends Error {
 }
 
 // `file` is the visitor's Blob (or a zip's entry found in the copy), `packing` 'gzip' or 'none'.
-// Returns { source, archive }. A gzip whose first unpacked block is no tar header throws
-// not_a_tar before the rest is unpacked: it is most often a database dump of any size.
+// Returns { source, archive }. Throws not_a_tar when no tar header turns up anywhere, which for a
+// gzip most often means a database dump; gzip_damaged when the gzip yields nothing at all. The
+// whole file is listed before that is decided: until 2026-11-21 its first block decided, and a
+// .tar.gz whose first header was unreadable went the dump's way with its mu-plugins unread.
 export const openTar = async (file, packing, { maxEntries, alive, limitBytes = TAR_UNPACKED_LIMIT_BYTES }) => {
   const tarEntries = [];
   const indexer = createTarIndexer({ onEntry: (entry) => tarEntries.push(entry), maxEntries });
   const problems = [];
   let source;
+  let unpackedBytes = -1;
   if (packing === 'gzip') {
     source = new GzipSource(file);
-    if (!looksLikeTar(await source.collect(0, TAR_BLOCK_BYTES))) throw new TarFormatError('not_a_tar');
     const unpacking = await source.index((bytes) => indexer.push(bytes), { limitBytes, alive });
+    unpackedBytes = unpacking.bytes;
     if (unpacking.state === 'too_large') problems.push({ code: 'gzip_too_large', path: '', params: { bytes: limitBytes } });
     if (unpacking.state === 'damaged' || unpacking.state === 'truncated') {
       problems.push({ code: 'gzip_damaged', path: '', params: { offset: unpacking.bytes } });
@@ -52,6 +57,7 @@ export const openTar = async (file, packing, { maxEntries, alive, limitBytes = T
   }
   const listing = indexer.finish();
   if (listing.state === 'too_many') throw new TarFormatError('too_many_entries', { entries: maxEntries });
+  if (tarEntries.length === 0 && unpackedBytes === 0) throw new TarFormatError('gzip_damaged', { offset: 0 });
   if (tarEntries.length === 0 && listing.state !== 'ended') throw new TarFormatError('not_a_tar');
   // What the gzip layer already explains is not said a second time.
   const isUnpackingCut = problems.length > 0;
@@ -108,42 +114,63 @@ const indexInPlace = async (file, indexer, alive) => {
 
 // Tar entries in the shape of stored zip entries (see the top of the file). A hard link takes the
 // data of the entry it names, as an extractor gives it: the last one of that name before it.
+// A file that tar programs write under different names (tar-reader.js `otherNames`) is one entry
+// per name, all with the same data, so a mu-plugin under any of them gets the strict checks.
 const asZipShaped = (tarEntries, problems) => {
   const latestOf = new Map();
   const seen = new Set();
-  return tarEntries.map((tarEntry, index) => {
+  const entries = [];
+  for (const tarEntry of tarEntries) {
     for (const anomaly of tarEntry.anomalies) {
       if (ENTRY_PROBLEMS.has(anomaly)) problems.push({ code: ENTRY_PROBLEMS.get(anomaly), path: tarEntry.name, params: {} });
     }
-    const isDirectory = tarEntry.kind === 'directory';
-    const { name } = tarEntry;
-    if (!isDirectory && seen.has(name)) problems.push({ code: 'duplicate_name', path: name, params: {} });
-    if (!isDirectory) seen.add(name);
-    const data = tarEntry.kind === 'hardlink' ? latestOf.get(tarEntry.linkName) ?? null : tarEntry;
-    // What an extractor writes: the stored data, which a link or a folder never has whatever its
-    // size field says (tar.size_without_data). A sparse file is never read, and its size as
-    // extracted stands for both sizes, which keeps it off the stored-size check.
-    let size = 0;
-    if (data !== null) size = data.readable ? data.storedBytes : data.size;
-    const entry = {
-      index,
-      name,
-      nameBytes: tarEntry.nameBytes,
-      extraLength: 0,
-      method: METHOD_STORED,
-      crc32: null,
-      compressedSize: size,
-      uncompressedSize: size,
-      headerOffset: data === null ? 0 : data.dataOffset,
-      isDirectory,
-      isSymlink: tarEntry.kind === 'symlink',
-      isEncrypted: false,
-      hasDescriptor: false,
-      unreadable: unreadableReason(data),
-    };
-    if (data !== null && (tarEntry.kind === 'file' || tarEntry.kind === 'hardlink')) latestOf.set(tarEntry.name, data);
-    return entry;
-  });
+    const others = tarEntry.otherNames ?? [];
+    // Read differently but under the same name: nothing goes unchecked, and a malformed header
+    // already has its own finding.
+    if (others.length > 0) {
+      problems.push({ code: 'read_differently', path: tarEntry.name, params: { other: others[0] } });
+    }
+    const primary = asZipEntry(tarEntry, { latestOf, index: entries.length });
+    entries.push(primary);
+    for (const other of others) entries.push({ ...primary, index: entries.length, name: other, nameBytes: ENCODER.encode(other) });
+    for (const name of [tarEntry.name, ...others]) {
+      if (!primary.isDirectory && seen.has(name)) problems.push({ code: 'duplicate_name', path: name, params: {} });
+      if (!primary.isDirectory) seen.add(name);
+    }
+  }
+  return entries;
+};
+
+const ENCODER = new TextEncoder();
+
+// One tar entry under its own name, `latestOf` (name -> data, for hard links) updated with every
+// name it is written under.
+const asZipEntry = (tarEntry, { latestOf, index }) => {
+  const data = tarEntry.kind === 'hardlink' ? latestOf.get(tarEntry.linkName) ?? null : tarEntry;
+  // What an extractor writes: the stored data, which a link or a folder never has whatever its
+  // size field says (tar.size_without_data). A sparse file is never read, and its size as
+  // extracted stands for both sizes, which keeps it off the stored-size check.
+  let size = 0;
+  if (data !== null) size = data.readable ? data.storedBytes : data.size;
+  if (data !== null && (tarEntry.kind === 'file' || tarEntry.kind === 'hardlink')) {
+    for (const linkable of [tarEntry.name, ...(tarEntry.otherNames ?? [])]) latestOf.set(linkable, data);
+  }
+  return {
+    index,
+    name: tarEntry.name,
+    nameBytes: tarEntry.nameBytes,
+    extraLength: 0,
+    method: METHOD_STORED,
+    crc32: null,
+    compressedSize: size,
+    uncompressedSize: size,
+    headerOffset: data === null ? 0 : data.dataOffset,
+    isDirectory: tarEntry.kind === 'directory',
+    isSymlink: tarEntry.kind === 'symlink',
+    isEncrypted: false,
+    hasDescriptor: false,
+    unreadable: unreadableReason(data),
+  };
 };
 
 // Data cut off by the end of the archive is found where it is read (entries.js locateTarData).

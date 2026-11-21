@@ -163,6 +163,9 @@ export const RULES = new Map([
   ['tar.duplicate_name', 'red'],
   ['tar.also_a_zip', 'red'],
   ['tar.malformed_pax', 'red'],
+  // Tar programs read the records in front of a file differently (tar-reader.js otherNames).
+  ['tar.read_differently', 'red'],
+  ['tar.size_read_differently', 'red'],
   ['tar.data_after_end', 'amber'],
 
   ['entry.corrupt_data', 'not_checked'],

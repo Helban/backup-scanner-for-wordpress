@@ -17,8 +17,11 @@ import { crc32 } from './crc32.js';
 const WINDOW_BYTES = 32 * 1024;
 const OUTPUT_BYTES = 256 * 1024;
 const LONGEST_MATCH = 258;
-// The name and comment fields have no length; a header is read no further than this.
-const HEADER_LIMIT_BYTES = 64 * 1024;
+// The name and comment fields have no length; a header is read no further than this, whether it
+// arrives in one piece or in many. Until 2026-11-21 the limit held only across pieces: the index
+// pass (1 MB pieces) took a 140 KB name that a reader of 64 KB pieces refused, and the archive
+// then read as nothing. gzip itself sets no limit; 16 MB of name is no honest file's.
+const HEADER_LIMIT_BYTES = 16 * 1024 * 1024;
 
 const GZIP_ID1 = 0x1f;
 const GZIP_ID2 = 0x8b;
@@ -153,6 +156,9 @@ export const createGunzip = ({ onBytes, limitBytes, onPoint = null, pointEvery =
   let storedLeft = 0;
   let literals = FIXED_LITERALS;
   let distances = FIXED_DISTANCES;
+  // What the tables of the current dynamic block were built from (null for the fixed codes): a
+  // point keeps these 316 bytes at most, not the tables, which take up to 288 KB.
+  let codeLengths = null;
   let lastPointAt = 0;
 
   const fail = (reason) => {
@@ -254,6 +260,10 @@ export const createGunzip = ({ onBytes, limitBytes, onPoint = null, pointEvery =
     }
     if (flags & FLAG_HEADER_CRC) end += 2;
     if (end > input.length) return waitForHeader();
+    if (end - at > HEADER_LIMIT_BYTES) {
+      fail('damaged');
+      return true;
+    }
     at = end;
     memberCrc = 0;
     memberBytes = 0;
@@ -299,12 +309,13 @@ export const createGunzip = ({ onBytes, limitBytes, onPoint = null, pointEvery =
     } else if (type === 1) {
       literals = FIXED_LITERALS;
       distances = FIXED_DISTANCES;
+      codeLengths = null;
       state = CODES;
     } else if (type === 2) {
       const tables = readCodeTables();
       if (tables === null) return restore(saved);
       if (state === OVER) return true;
-      [literals, distances] = tables;
+      [literals, distances, codeLengths] = tables;
       state = CODES;
     } else {
       fail('damaged');
@@ -360,7 +371,7 @@ export const createGunzip = ({ onBytes, limitBytes, onPoint = null, pointEvery =
     const literalTable = buildTable(lengths.subarray(0, literalCount));
     const distanceTable = buildTable(lengths.subarray(literalCount));
     if (literalTable === null || distanceTable === null) return broken();
-    return [literalTable, distanceTable];
+    return [literalTable, distanceTable, { lengths: lengths.slice(), literalCount }];
   };
 
   const broken = () => {
@@ -381,7 +392,12 @@ export const createGunzip = ({ onBytes, limitBytes, onPoint = null, pointEvery =
         state = isFinalBlock ? TRAILER : BLOCK;
         return true;
       }
-      if (out >= fullAt) flush();
+      if (out >= fullAt) {
+        flush();
+        // flush() hands the output over and may hit the limit; the block must not go on after it
+        // (it did, and a stream of tiny stored blocks ran 150 times past a 1 MB limit).
+        if (state === OVER) return true;
+      }
       const count = Math.min(storedLeft, input.length - at, fullAt - out);
       if (count === 0) return false;
       window.set(input.subarray(at, at + count), out);
@@ -561,8 +577,7 @@ export const createGunzip = ({ onBytes, limitBytes, onPoint = null, pointEvery =
       bitBuffer,
       bitCount,
       window: kept,
-      literals,
-      distances,
+      codeLengths,
       isFinalBlock,
       storedLeft,
       memberCrc,
@@ -580,7 +595,10 @@ export const createGunzip = ({ onBytes, limitBytes, onPoint = null, pointEvery =
     inputStart = point.inputOffset;
     emittedBytes = point.outputOffset;
     lastPointAt = point.outputOffset;
-    ({ state, bitBuffer, bitCount, literals, distances, isFinalBlock, storedLeft, memberCrc, memberBytes, members } = point);
+    ({ state, bitBuffer, bitCount, codeLengths, isFinalBlock, storedLeft, memberCrc, memberBytes, members } = point);
+    // The point was taken from tables that were built from these lengths, so they build again.
+    literals = codeLengths === null ? FIXED_LITERALS : buildTable(codeLengths.lengths.subarray(0, codeLengths.literalCount));
+    distances = codeLengths === null ? FIXED_DISTANCES : buildTable(codeLengths.lengths.subarray(codeLengths.literalCount));
   };
 
   if (from !== null) resumeFrom(from);

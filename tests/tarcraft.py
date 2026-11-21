@@ -58,6 +58,8 @@ def record(member: TarMember) -> bytes:
 
 PAX = b"x"
 PAX_SOLARIS = b"X"
+PAX_GLOBAL = b"g"
+GNU_LONG_NAME = b"L"
 
 
 def pax_record(key: str, value: str, length_text: str = "{}") -> bytes:
@@ -69,6 +71,15 @@ def pax_record(key: str, value: str, length_text: str = "{}") -> bytes:
     while len(length_text.format(length)) + len(body) != length:
         length = len(length_text.format(length)) + len(body)
     return length_text.format(length).encode() + body
+
+
+def pax_raw(after_length: bytes) -> bytes:
+    """A record whose bytes after the length are given as they are (two blanks, a NUL in the key,
+    a byte order mark), with the length that counts them."""
+    length = len(after_length) + 1
+    while len(str(length)) + len(after_length) != length:
+        length = len(str(length)) + len(after_length)
+    return str(length).encode() + after_length
 
 
 def craft_tar(members: list[TarMember], end: bytes = END_MARKER) -> bytes:

@@ -1097,15 +1097,15 @@ TAR_MUTATIONS: list[Mutation] = [
     ),
     Mutation(
         "tar entry anomalies not said", TAR_ARCHIVE,
-        "const ENTRY_PROBLEMS = new Map([['size_without_data', 'size_without_data'], ['file_named_as_folder', 'file_named_as_folder']]);",
-        "const ENTRY_PROBLEMS = new Map();", (sample("tar_size_without_data"), sample("tar_file_named_as_folder")),
+        "const ENTRY_PROBLEMS = new Map([\n  ['size_without_data', 'size_without_data'], ['file_named_as_folder', 'file_named_as_folder'],\n  ['size_read_differently', 'size_read_differently'],\n]);",
+        "const ENTRY_PROBLEMS = new Map();", (sample("tar_size_without_data"), sample("tar_file_named_as_folder"), sample("tar_global_size")),
     ),
     Mutation(
         "size field of a link taken as its data", TAR_ARCHIVE, "if (data !== null) size = data.readable ? data.storedBytes : data.size;",
         "if (data !== null) size = data.size;", (sample("tar_device_with_size"),),
     ),
     Mutation(
-        "duplicate tar name not said", TAR_ARCHIVE, "if (!isDirectory && seen.has(name)) problems.push(", "if (false) problems.push(",
+        "duplicate tar name not said", TAR_ARCHIVE, "if (!primary.isDirectory && seen.has(name)) problems.push(", "if (false) problems.push(",
         (sample("tar_duplicate_name"),),
     ),
     switch_off("truncated tar not said", TAR_ARCHIVE, "!isUnpackingCut && listing.state === 'truncated'", sample("tar_truncated")),
@@ -1132,8 +1132,10 @@ TAR_MUTATIONS: list[Mutation] = [
         "const LOCAL_PAX_TYPES = new Set([TYPE_PAX]);", (sample("tar_pax_solaris_name"),),
     ),
     Mutation(
-        "pax length read by Number", TAR_READER, "const length = decimalOrNull(decoder.decode(content.subarray(at, space)));",
-        "const length = Number(decoder.decode(content.subarray(at, space)));", (sample("tar_pax_malformed_length"),),
+        "pax length read by Number", TAR_READER, "    const length = decimalOrNull(PAX_DECODER.decode(content.subarray(digitsAt, digitsEnd)));\n",
+        "    const laxEnd = content.indexOf(ASCII_SPACE, digitsAt);\n    if (laxEnd >= 0) digitsEnd = laxEnd;\n"
+        "    const length = Number(PAX_DECODER.decode(content.subarray(digitsAt, digitsEnd)));\n",
+        (sample("tar_pax_malformed_length"),),
     ),
     Mutation(
         "pax size read by Number", TAR_READER, "const size = decimalOrNull(records.get('size'));", "const size = Number(records.get('size'));",
@@ -1142,6 +1144,44 @@ TAR_MUTATIONS: list[Mutation] = [
     Mutation(
         "malformed pax not said", TAR_ARCHIVE, "  if (listing.anomalies.includes('malformed_pax')) problems.push({ code: 'malformed_pax', path: '', params: {} });\n", "",
         (sample("tar_pax_malformed_length"),),
+    ),
+    # The second Fable review (2026-11-21): headers tar programs read differently.
+    Mutation(
+        "data not checked under its other names", TAR_ARCHIVE,
+        "    for (const other of others) entries.push({ ...primary, index: entries.length, name: other, nameBytes: ENCODER.encode(other) });\n", "",
+        (sample("tar_global_path"), sample("tar_override_across_damaged_block")),
+    ),
+    Mutation(
+        "pax read the strict way only", TAR_READER, "  return { records: gnu.records, otherReadings: differs ? [strict.records] : []",
+        "  return { records: strict.records, otherReadings: differs ? [gnu.records] : []", (sample("tar_pax_two_blanks"), sample("tar_pax_nul_in_key")),
+    ),
+    Mutation(
+        "other pax readings dropped", TAR_READER, "otherReadings: differs ? [strict.records] : []", "otherReadings: []",
+        (sample("tar_pax_nul_in_key"), sample("tar_pax_two_blanks")),
+    ),
+    Mutation(
+        "byte order mark dropped", TAR_READER, "new TextDecoder('utf-8', { ignoreBOM: true })", "new TextDecoder('utf-8')", (sample("tar_pax_bom_key"),),
+    ),
+    Mutation("pax path not cut at NUL", TAR_READER, "  const cut = end < 0 ? bytes : bytes.subarray(0, end);\n", "  const cut = bytes;\n", (sample("tar_pax_nul_in_path"),)),
+    Mutation(
+        "empty pax path applied", TAR_READER, "  return cut.length === 0 ? null : cut.slice();", "  return cut.slice();", (sample("tar_pax_empty_path"),),
+    ),
+    Mutation("long name after pax wins", TAR_READER, "    if (next.hasPaxPath) {\n      next.otherNames.push(longName);", "    if (false) {\n      next.otherNames.push(longName);", (sample("tar_pax_then_long_name"),)),
+    Mutation(
+        "second pax header adds to the first", TAR_READER, "    if (next.paxHeaders > 1) {", "    if (false) {", (sample("tar_two_pax_headers"),),
+    ),
+    Mutation(
+        "global path read alike by all", TAR_READER, "if (globalPax.has('path') || globalPax.has('linkpath') || pax.isMalformed) globalIrregular = true;",
+        "if (pax.isMalformed) globalIrregular = true;", (sample("tar_global_path"),),
+    ),
+    Mutation("global size read alike by all", TAR_READER, "    if (globalPax.has('size')) globalSizeDiffers = true;\n", "", (sample("tar_global_size"),)),
+    Mutation(
+        "override kept across a damaged block", TAR_READER, "      if (hasOverride(next)) next.irregular = true;\n", "",
+        (sample("tar_override_across_damaged_block"),),
+    ),
+    Mutation(
+        "gzip header limit back to 64 KB", GUNZIP, "const HEADER_LIMIT_BYTES = 16 * 1024 * 1024;", "const HEADER_LIMIT_BYTES = 64 * 1024;",
+        (sample("tar_gz_long_gzip_name"),),
     ),
     # Stage 3: a dump dropped by itself, and tars inside the copy.
     Mutation(

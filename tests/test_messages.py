@@ -69,6 +69,8 @@ VARIANTS = {
     "error": ["TypeError", None],
     "localName": ["other.php", ""],
     "place": ["content", "languages", "site", "folder"],
+    "other": ["wp-content/mu-plugins/loader.php", ""],
+    "offset": [0, 10],
     **{parameter: COUNTS for parameter in ["files", "phpFiles", "missing", "plugins", "hosts", "entries", "components"]},
 }
 BROKEN_TEXT = ("undefined", "NaN", "[object", "null")

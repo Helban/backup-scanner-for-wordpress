@@ -571,7 +571,15 @@ const FINDING_TEXT = new Map([
 
   ['tar.not_a_tar', () => 'Plik zaczyna się jak archiwum tar, ale nie da się z niego przeczytać ani jednej pozycji. Nic nie zostało sprawdzone.'],
   ['tar.malformed_pax', () => (
-    'Jeden z nagłówków pax tego archiwum jest zniekształcony. GNU tar, bsdtar (tar z Windowsa) i tar z busyboxa pomijają to, co w nim zniekształcone, i rozpakowują plik pod jego własną nazwą. Skaner sprawdził go tak samo. Inne programy mogą ten nagłówek odczytać inaczej.'
+    'Jeden z nagłówków pax tego archiwum jest zniekształcony i programy rozpakowujące archiwa tar czytają go różnie. Każdy plik, który ten nagłówek nazywa, skaner sprawdził pod każdą nazwą, jaką te programy mogą mu nadać.'
+  )],
+  ['tar.read_differently', (params) => {
+    const other = params.get('other') ?? '';
+    const name = other === '' ? '' : ` Jedna z tych nazw: ${other}.`;
+    return `Programy rozpakowujące archiwa tar różnie czytają nagłówki przed tym plikiem, więc mogą go zapisać pod inną nazwą.${name} Skaner sprawdził go pod każdą z nich.`;
+  }],
+  ['tar.size_read_differently', () => (
+    'Programy rozpakowujące archiwa tar czytają dla tego pliku różną długość danych, więc za nim część z nich może znaleźć pliki, których skaner nie wypisał. Tych plików skaner nie sprawdził.'
   )],
   ['tar.too_many_entries', (params) => (
     `Archiwum ma ponad ${formatCount(params.get('entries') ?? 0)} ${plural(params.get('entries') ?? 0, { one: 'pozycję', few: 'pozycje', many: 'pozycji' })}, więcej, niż ten skaner przyjmuje. Nic nie zostało sprawdzone.`
@@ -581,8 +589,9 @@ const FINDING_TEXT = new Map([
   )],
   ['tar.truncated', () => 'Tar urywa się w środku pliku albo nagłówka, więc kopia jest ucięta. Tego, czego w niej brakuje, nie dało się sprawdzić.'],
   ['tar.no_end', () => 'Tar kończy się bez znacznika końca, więc kopia może być ucięta. Tego, czego w niej brakuje, nie dało się sprawdzić.'],
-  ['tar.gzip_damaged', (params) => (
-    `Spakowanie gzip jest uszkodzone po ${formatBytes(params.get('offset') ?? 0)} rozpakowanych danych. Sprawdzono tylko to, co było przed uszkodzeniem.`
+  ['tar.gzip_damaged', (params) => ((params.get('offset') ?? 0) === 0
+    ? 'Spakowania gzip nie da się rozpakować od samego początku. Nic nie zostało sprawdzone.'
+    : `Spakowanie gzip jest uszkodzone po ${formatBytes(params.get('offset'))} rozpakowanych danych. Sprawdzono tylko to, co było przed uszkodzeniem.`
   )],
   ['tar.gzip_too_large', (params) => `Archiwum rozpakowuje się do ponad ${sizeOf(params)}. Sprawdzono tylko tyle.`],
   ['tar.damaged_header', (params) => (

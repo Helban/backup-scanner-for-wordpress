@@ -576,7 +576,15 @@ const FINDING_TEXT = new Map([
 
   ['tar.not_a_tar', () => 'This file starts like a tar archive, but not one entry of it can be read. Nothing was checked.'],
   ['tar.malformed_pax', () => (
-    'A pax header of the tar is malformed. GNU tar, bsdtar (the tar of Windows) and busybox tar pass over what is malformed in it and unpack the file under its own name, and the scanner checked it so too. Other programs may read the header differently.'
+    'A pax header of the tar is malformed, and tar programs read it in different ways. Each file it names was checked under every name those programs may give it.'
+  )],
+  ['tar.read_differently', (params) => {
+    const other = params.get('other') ?? '';
+    const name = other === '' ? '' : ` One of those names: ${other}.`;
+    return `Tar programs read the headers in front of this file differently, so they may write it under another name.${name} The scanner checked it under each of them.`;
+  }],
+  ['tar.size_read_differently', () => (
+    'Tar programs read a different length of data for this file, so after it some of them may find files the scanner did not list. Those files were not checked.'
   )],
   ['tar.too_many_entries', (params) => (
     `The archive holds more than ${withNoun(params.get('entries') ?? 0, 'entry', 'entries')}, more than this scanner takes. Nothing was checked.`
@@ -588,8 +596,9 @@ const FINDING_TEXT = new Map([
   }],
   ['tar.truncated', () => 'The tar stops in the middle of a file or a header, so the copy is cut short. What was missing could not be checked.'],
   ['tar.no_end', () => 'The tar ends without its end marker, so the copy may be cut short. What was missing could not be checked.'],
-  ['tar.gzip_damaged', (params) => (
-    `The gzip packing is damaged after ${formatBytes(params.get('offset') ?? 0)} of unpacked data. Only what came before it was checked.`
+  ['tar.gzip_damaged', (params) => ((params.get('offset') ?? 0) === 0
+    ? 'The gzip packing cannot be unpacked from its start. Nothing was checked.'
+    : `The gzip packing is damaged after ${formatBytes(params.get('offset'))} of unpacked data. Only what came before it was checked.`
   )],
   ['tar.gzip_too_large', (params) => `The archive unpacks to more than ${sizeOf(params)}. Only that much was checked.`],
   ['tar.damaged_header', (params) => (

@@ -1,7 +1,7 @@
 # Backup Scanner for WordPress
 
-Checks a WordPress backup (a zip, a .tar or a .tar.gz) in the browser before you run the copy
-on your own computer. The file is read in the tab. There is no server to upload it to.
+Checks a WordPress backup (a zip, a .tar or a .tar.gz, or its database dump on its own) in the
+browser before you run the copy on your own computer. The file is read in the tab. There is no server to upload it to.
 
 It exists because of one job offer. A "client" sent a site export and asked for it to be run
 locally. A file in `mu-plugins` renamed a 4.6 MB "JPEG" from uploads to `.exe` and started it.
@@ -38,7 +38,8 @@ and fails if the marker shows up in any request
   ([files and names](docs/rules.md#files-and-names))
 - PHP lying where WordPress loads no code from, such as a cache or backup folder: amber, one
   line per folder.
-- Archives inside the copy. Zips are opened one level deep and get the same checks. The end
+- Archives inside the copy. Zips, tars and .tar.gz files are opened one level deep and get the
+  same checks. The end
   of every picture, font, film, sound file and PDF is read for a zip glued behind it, and the
   whole file for a program hidden inside it.
   ([archives](docs/rules.md#archives-inside-the-copy))
@@ -76,7 +77,9 @@ and fails if the marker shows up in any request
 - The database dump: `eval` of `base64_decode`, PHP kept by snippet plugins, scripts loaded
   from other hosts, text written for an AI assistant that reads the copy. A `.sql` file is read
   as it is, a `.sql.gz` and UpdraftPlus's `-db.gz` are unpacked on the way, every gzip member
-  of the latter and not only the first. ([details](docs/rules.md#the-database))
+  of the latter and not only the first. A dump dropped on the page by itself gets the same
+  checks, except whether its active plugins are in the copy, which needs the copy; the report
+  says so. ([details](docs/rules.md#the-database))
 - Files from attacks described in public, matched by SHA-256 (`scanner/indicators.js`). The
   zip the original attack was sent in is on the list too, found in the copy or as the file you
   drop on the page. ([details](docs/rules.md#known-attacks))
@@ -132,8 +135,8 @@ ones.
 - A zip behind a compressed media file that unpacks to more than 64 MB. It lands under "Not
   checked".
 - What lies behind a single empty block of a tar. busybox tar unpacks it, the scanner names it
-  red and does not read it. A tar found inside the copy is not opened either, and neither is a
-  .gz other than a database dump: inside the copy only zips are opened.
+  red and does not read it. A .tar.gz inside the copy that unpacks to more than 64 MB is checked
+  only up to there, and a .gz there that holds neither a tar nor a database dump is not opened.
 
 A zip built on purpose to fool how names and folders are read (a decoy core named so that only
 Windows unpacks it into place, folders that differ only in letter case, entries no unpacker
@@ -177,8 +180,8 @@ every one of those tests on the untouched scanner and stops if any fails there: 
 fails anyway would make every mutation it guards look caught.
 
 `SCANNER_BROWSER=firefox` or `webkit` runs the same suite there. Measured on 2026-11-21 with
-Chromium 151, Firefox 153 and WebKit 26.5: 629 tests pass in all three (the one live test is
-off by default), and 723 of 723 mutations are caught. The same suite can be pointed at a site
+Chromium 151, Firefox 153 and WebKit 26.5: 640 tests pass in all three (the one live test is
+off by default), and 732 of 732 mutations are caught. The same suite can be pointed at a site
 that carries the scanner, with that site's own header rules (`SCANNER_SITE_ROOT`,
 `SCANNER_PAGE_PATH` and `SCANNER_SERVED`, described in `tests/serve.py`); the pages at
 helban.dev are tested that way before a release. The tests never reach wordpress.org or

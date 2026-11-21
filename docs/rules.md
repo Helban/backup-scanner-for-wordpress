@@ -79,7 +79,9 @@ gets an amber line too.
 
 Zips found inside the copy are opened one level deep and their contents get the same checks.
 A finding there reads `uploads/2025/12/assets.zip » mockup.jpeg`. Office documents are zips
-too, so they are opened as well.
+too, so they are opened as well. So are a `.tar` and a `.tar.gz` (told by their first bytes, as
+on the page), within the same limits: a `.tar.gz` there unpacks no further than 64 MB, where the
+copy itself may unpack 16 GB. A gzip that holds no tar and is no database dump is not opened.
 
 ### A zip behind a picture
 
@@ -154,7 +156,8 @@ tools do.
 
 A `.tar` or `.tar.gz` gets every check a zip gets. The first bytes of the file decide what it
 is (`1f 8b` for gzip, a tar header for tar, anything else is read as a zip), so a backup renamed
-to `.jpg` is still read as what it is.
+to `.jpg` is still read as what it is. A gzip whose first unpacked block is no tar header is read
+as a database dump on its own ([the database](#the-database)).
 
 ### A .tar.gz without unpacking it
 
@@ -581,6 +584,14 @@ A dump is a file named `.sql`, `.sql.gz` or like UpdraftPlus's database file
 whether it is unpacked on the way, not its name: gzip under `.sql` is unpacked, plain text
 under `.sql.gz` is read as it is.
 
+A dump can also be dropped on the page by itself: a gzip that holds no tar (whatever its name,
+told by its first unpacked block), or a plain file named `.sql`, which has no first bytes of its
+own. It gets the same database checks. One of them cannot run without the site's files: whether
+the plugins the dump calls active are in the copy. Instead of a line for every active plugin, the
+report says once that only the dump was checked. The real UpdraftPlus 1.26.16 database file of
+the test site, dropped alone, gives the same two database findings as the whole copy it came
+from (2026-11-21).
+
 The unpacking is the scanner's own (`scanner/gunzip.js`), not the browser's. UpdraftPlus joins
 one gzip member per table into one file, 14 members for a fresh site, and the browser's
 `DecompressionStream` stops after the first member, which in that file holds 1.3% of the dump
@@ -618,9 +629,9 @@ file of any other size is not read a second time, so a copy of 2 GB is never has
 ## What it says when it could not look
 
 "Not checked" is its own list, next to red and amber, and it is never folded into "nothing
-found". An encrypted entry lands there. So does a 7z, RAR, tar, gzip, bzip2, xz, zstd, cab,
-`.wpress` or phar archive (only zip is opened, and gzip when it is the database dump), a zip
-inside a zip inside the copy, and
+found". An encrypted entry lands there. So does a 7z, RAR, gzip, bzip2, xz, zstd, cab,
+`.wpress` or phar archive (only zip and tar are opened, and gzip when it holds a tar or is the
+database dump), an archive inside an archive inside the copy, and
 anything past a limit: 64 MB unpacked per nested zip, 512 MB and 60 seconds for all of them,
 200 nested zips, 50,000 entries in one. The finding names the limit. Reading media files
 through has 60 seconds of its own; files it did not reach are counted there too. So is PHP the

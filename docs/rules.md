@@ -156,9 +156,71 @@ tools do.
 
 A `.tar` or `.tar.gz` gets every check a zip gets. The first bytes of the file decide what it
 is (`1f 8b` for gzip, a tar header for tar, anything else is read as a zip), so a backup renamed
-to `.jpg` is still read as what it is. A gzip in which no tar header turns up anywhere is read
-as a database dump on its own ([the database](#the-database)); the whole gzip is unpacked before
-that is decided, so a .tar.gz whose first header is damaged stays a .tar.gz.
+to `.jpg` is still read as what it is. A gzip that yields no tar entry is read as a database
+dump on its own ([the database](#the-database)), unless one of its blocks is one that some tar
+program takes for a header and the unpacked file does not start as SQL text (a comment or a
+statement). The whole gzip is unpacked before that is decided, so a .tar.gz whose first header
+is damaged stays a .tar.gz. A file whose name ends in `.tar`, `.tar.gz` or `.tgz` is never read
+as a dump: it will be unpacked with tar, and a block can be SQL text and a tar header at once.
+
+The gzip layer is read the way the most willing program reads it. Python's gzip module (and so
+Python's tarfile) reads a member that follows zero bytes after the one before, and a member with
+the reserved flag bits set, where gzip itself stops or refuses. The scanner reads both, so what
+tarfile unpacks from there is checked too.
+
+### The one form it vouches for
+
+Three reviews of this reader in a row found headers that the four tar programs read in
+different ways, and each fix met a new kind: pax records, number fields with a tab or a sign,
+a ustar prefix under a magic nobody expects, link names, old GNU sparse blocks. A list of known
+disagreements did not close. So the scanner keeps a list of the other kind: the headers that
+honest writers produce and that GNU tar 1.35, bsdtar 3.8, busybox tar and Python's tarfile all
+read alike (`scanner/tar-form.js`). Wherever an archive leaves that form, it is red
+(`tar.unusual_form`, with the byte where it first leaves it). The rest of this section still
+applies there, as a best effort.
+
+The form, header by header:
+
+- the magic is POSIX ustar (`ustar\0` and version `00`), GNU (`ustar  \0`), or none at all
+  with the rest of the block empty (v7);
+- the checksum is the unsigned sum. Every number field holds octal digits, optionally led by
+  spaces and followed by spaces or NULs, or only NULs, which every program reads as 0. GNU's
+  base-256 is left out, and so is every form one program alone accepts (a tab, a sign, `0o`, an
+  underscore, a digit after the terminator);
+- the type is a file, a folder, a hard link or a symbolic link; also a pax header (`x`, or a
+  global one, `g`) under the ustar magic, and a GNU long name (`L`) or long link name (`K`)
+  under the GNU magic. GNU's bytes from 345 on (access times, sparse maps) are empty;
+- the name and link name fields hold nothing after their first NUL;
+- one pax header, or one long name and one long link name, stand in front of a file, and a
+  global header stands between files only. Its records fill the data exactly, each written as
+  a plain decimal length, one space, a key, `=`, a value and a newline, each key once. A file's
+  own header may use the keys honest writers use (path, linkpath, size, the times, uid, gid,
+  the user and group names, hdrcharset, charset, comment, and the `SCHILY.` and `LIBARCHIVE.`
+  extended attributes); a global one only comment, charset, hdrcharset and mtime. A path or a
+  link path is not empty, holds no NUL, and is UTF-8 unless the header says `hdrcharset=BINARY`.
+  A pax size equals the size in the header, as node-tar writes it on every header;
+- the name a file is written under is relative and has no empty, `.` or `..` part, no NUL and
+  no backslash (the `tar.exe` of Windows takes a backslash for a folder break). A trailing slash
+  belongs to a folder. One leading `./` is allowed, as `tar -C dir .` writes it;
+- a link or a folder declares no data; a hard link names a regular file listed before it; a
+  symbolic link names something; no name comes twice, folders aside; no file lies under the name
+  of an earlier symbolic link, which some of the programs follow, writing the file wherever the
+  link points;
+- a damaged block among the entries, and data after a single empty block, are outside it too.
+
+Measured on 79 honest archives of one WordPress-like tree (GNU tar in its five formats and with
+`-S`, `--label`, `-g`, `--xattrs`, a global header and two blocking factors; bsdtar in pax,
+ustar, v7 and gnutar formats; busybox; Python's tarfile in pax and gnu formats; node-tar; git
+archive; PHP's PharData): the 53 written in the usual ways are all in the form. The 26 outside
+it are sparse files (GNU `-S`, bsdtar's default), GNU incremental dumps and volume labels.
+
+Against the review cases and random mutants, with each of the four programs unpacking every
+archive: of 460 cases from the three reviews, 70 are in the form, and in each of them every file
+any program writes is on the scanner's list under that name, with that data and size. Of 1,900
+mutants of seven honest archives (header bytes, number spellings, types, magics, names, pax
+records, long names, zero blocks; the checksum made right again in most), 275 are in the form,
+and the same holds for each. On the first 400 mutants, the scanner as it was before the form
+listed something other than what the programs wrote in 54.
 
 ### A .tar.gz without unpacking it
 
@@ -191,10 +253,10 @@ finding says how:
   damaged block. The programs disagree among themselves on most of these, so the scanner does
   not follow one of them: it keeps every name one of them writes the data under and checks the
   data under each name, so a mu-plugin gets the strict checks whichever program unpacks it. Red
-  (`tar.read_differently`). Where they read a different length of data (a global size, a pax
-  size below 8 GiB, which only a header that cannot hold the size needs), what some of them find
-  after it is not listed, and that is red too. A byte order mark is kept as part of a key, as all
-  four programs keep it;
+  (`tar.read_differently`). Where they read a different length of data (a global size, or a pax
+  size other than the header's, which busybox ignores), what some of them find after it is not
+  listed, and that is red too. A byte order mark is kept as part of a key, as all four programs
+  keep it;
 - data after a single empty block: GNU tar, bsdtar and Python stop there, busybox tar unpacks
   what follows. Red, and that data is not checked;
 - a link or a folder that declares data: GNU tar and Python read none, and a program that does
@@ -602,8 +664,10 @@ A dump is a file named `.sql`, `.sql.gz` or like UpdraftPlus's database file
 whether it is unpacked on the way, not its name: gzip under `.sql` is unpacked, plain text
 under `.sql.gz` is read as it is.
 
-A dump can also be dropped on the page by itself: a gzip in which no tar header turns up
-(whatever its name), or a plain file named `.sql`, which has no first bytes of its own. It gets the same database checks. One of them cannot run without the site's files: whether
+A dump can also be dropped on the page by itself: a gzip that yields no tar entry (see
+[how a tar is read](#how-a-tar-is-read) for when that still makes it a tar; a name ending in
+`.tar`, `.tar.gz` or `.tgz` always does), or a plain file named `.sql`, which has no first
+bytes of its own. It gets the same database checks. One of them cannot run without the site's files: whether
 the plugins the dump calls active are in the copy. Instead of a line for every active plugin, the
 report says once that only the dump was checked. The real UpdraftPlus 1.26.16 database file of
 the test site, dropped alone, gives the same two database findings as the whole copy it came

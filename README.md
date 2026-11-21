@@ -48,12 +48,17 @@ and fails if the marker shows up in any request
   unzip programs write them, so `mu-plugins/./loader.php` is a mu-plugin.
   ([details](docs/rules.md#how-the-zip-itself-is-read))
 - A .tar or .tar.gz gets the same checks as a zip. Its first bytes decide the format, not its
-  name. A .tar.gz is never held unpacked: one pass keeps a resume point every 4 MB and a file is
-  read from the nearest one. Where tar programs disagree on what an archive holds, that is red:
-  a damaged header that GNU tar and bsdtar skip (the files behind it are checked too), data
-  behind a single empty block that busybox tar unpacks, a link that declares data of its own,
-  a file that is a tar and a zip at once.
-  ([details](docs/rules.md#how-a-tar-is-read))
+  name, except that a file named `.tar`, `.tar.gz` or `.tgz` is never read as a database dump.
+  A .tar.gz is never held unpacked: one pass keeps a resume point every 4 MB and a file is
+  read from the nearest one. The scanner vouches for one form of tar: the headers that GNU tar,
+  bsdtar, busybox tar and Python's tarfile all read alike, which is what the usual writers
+  produce (53 of 79 honest test archives; the rest hold sparse files, GNU incremental dumps or
+  volume labels). An archive that leaves that form is red, with the byte where it does. Within
+  the form, every file any of the four programs wrote from 398 test archives was on the list
+  under that name with that data. Where the programs disagree, the finding also says how: a
+  damaged header that GNU tar and bsdtar skip (the files behind it are checked too), data behind
+  a single empty block that busybox tar unpacks, a link that declares data of its own, a file
+  that is a tar and a zip at once. ([details](docs/rules.md#how-a-tar-is-read))
 - Core and plugin files are checked against the official checksums of wordpress.org. A changed
   core or plugin file is red; a file that matches is the official one and its other findings
   are dropped. Backups split into parts, as UpdraftPlus makes them, are
@@ -137,6 +142,11 @@ ones.
 - What lies behind a single empty block of a tar. busybox tar unpacks it, the scanner names it
   red and does not read it. A .tar.gz inside the copy that unpacks to more than 64 MB is checked
   only up to there, and a .gz there that holds neither a tar nor a database dump is not opened.
+- A tar outside the one form it vouches for. It is red, and its list may miss files that a tar
+  program writes. Honest archives land there too: sparse files (bsdtar reads them by default),
+  GNU incremental dumps and volume labels, and a file of 8 GiB or more, whose size needs a field
+  the form leaves out (GNU's base-256, or a pax size that busybox ignores). Unpack such an archive
+  and pack it again with `tar -czf` or as a zip, and scan that.
 
 A zip built on purpose to fool how names and folders are read (a decoy core named so that only
 Windows unpacks it into place, folders that differ only in letter case, entries no unpacker

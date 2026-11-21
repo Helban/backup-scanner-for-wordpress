@@ -71,6 +71,8 @@ VARIANTS = {
     "place": ["content", "languages", "site", "folder"],
     "other": ["wp-content/mu-plugins/loader.php", ""],
     "offset": [0, 10],
+    # The table of a file kept in the database as base64; '' when the dump does not name it.
+    "table": ["wp_options", ""],
     **{parameter: COUNTS for parameter in ["files", "phpFiles", "missing", "plugins", "hosts", "entries", "components"]},
 }
 BROKEN_TEXT = ("undefined", "NaN", "[object", "null")

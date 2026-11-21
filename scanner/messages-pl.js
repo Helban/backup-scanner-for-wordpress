@@ -135,6 +135,13 @@ const packedArchive = (params) => `archiwum ${ARCHIVE_KINDS.get(params.get('what
 const PACKED_PROGRAM_NOTE = 'Po zdekodowaniu i zapisaniu to program, którego nie pokazuje żaden plik z kopii.';
 const PACKED_ARCHIVE_NOTE = 'Tego, co z niego wyjdzie, nie ma w żadnym pliku kopii, więc ten skaner tego nie widział.';
 
+// The row of the database dump that keeps a file as base64 (database.js findEncodedFiles): its
+// table when the dump names one before it, '' when it does not.
+const encodedRow = (params) => {
+  const table = String(params.get('table') ?? '');
+  return table === '' ? 'Jeden z wierszy bazy' : `Wiersz tabeli ${table}`;
+};
+
 // Why the files of the core or of a plugin were not compared with wordpress.org. The same
 // reason has to fit "rdzeń" and "wtyczka", so none of them names the thing.
 const NOT_COMPARED_REASONS = new Map([
@@ -496,6 +503,16 @@ const FINDING_TEXT = new Map([
   ['config.too_large', (params) => `Plik ustawień serwera (${sizeOf(params)}), większy, niż ten skaner czyta. Nie został sprawdzony.`],
 
   ['db.eval_base64', () => 'W bazie leży kod PHP, który wykonuje przez eval tekst zdekodowany z base64. Tak ukrywa się to, co naprawdę się uruchamia.'],
+  ['db.encoded_program', (params) => (
+    `${encodedRow(params)} trzyma ${PROGRAM_KINDS.get(params.get('what')) ?? 'program'} zapisany jako tekst base64. ${PACKED_PROGRAM_NOTE}`
+  )],
+  ['db.encoded_code', (params) => (
+    `${encodedRow(params)} trzyma kod PHP zapisany jako tekst base64. Żaden plik z kopii go nie pokazuje, `
+    + 'a uruchomi się dopiero wtedy, gdy inny kod go zdekoduje i wykona. Poszukaj kodu, który czyta ten wiersz.'
+  )],
+  ['db.encoded_archive', (params) => (
+    `${encodedRow(params)} trzyma archiwum ${ARCHIVE_KINDS.get(params.get('what')) ?? 'nieznanego rodzaju'} zapisane jako tekst base64. ${PACKED_ARCHIVE_NOTE}`
+  )],
   ['db.snippet_rows', () => 'W bazie są zapisane snippety kodu, które strona wykonuje jako PHP. Przeczytaj każdy, zanim uruchomisz kopię.'],
   ['db.snippet_plugin_active', (params) => {
     // The slugs of the active snippet plugins, joined with ", ".

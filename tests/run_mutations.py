@@ -139,6 +139,65 @@ FINDING_ROWS = {
 
 CONFIG_RULES = "scanner/config-rules.js"
 DATABASE = "scanner/database.js"
+TABLE_TEST = "test_database.py::test_a_file_kept_as_base64_is_named_with_its_table"
+CUT_TEST = "test_database.py::test_a_dump_cut_anywhere_reads_the_same"
+# A file kept in a row as base64 text (database.js findEncodedFiles).
+ENCODED_ROW_MUTATIONS: list[Mutation] = [
+    Mutation(
+        "files kept as base64 not reported", DATABASE,
+        "  for (const [rule, params] of found.encodedFiles) reporter.report(rule, path, params);\n", "",
+        (sample("database_encoded_program"),),
+    ),
+    Mutation("base64 runs of any length judged", DATABASE, "run.letters >= ENCODED_MIN_LENGTH ?", "run.letters >= 0 ?", (sample("database_honest_base64"),)),
+    Mutation(
+        "program kept as base64 in a row not told", DATABASE,
+        "  if (packed?.signal === 'encoded_program') return { rule: 'db.encoded_program', what: packed.kind };\n", "",
+        (sample("database_encoded_program"),),
+    ),
+    switch_off("PHP kept as base64 in a row", DATABASE, "holdsPhpOpenTag(bytesOf(decoded))", sample("database_encoded_code")),
+    Mutation(
+        "archive kept as base64 in a row not told", DATABASE,
+        "return packed === null ? null : { rule: 'db.encoded_archive', what: packed.kind };", "return null;",
+        (sample("database_encoded_archive"),),
+    ),
+    Mutation("escaped r not a line break", DATABASE, "code === 0x6e || code === 0x72", "code === 0x6e", (sample("database_encoded_program_in_lines"),)),
+    Mutation("escaped n not a line break", DATABASE, "code === 0x6e || code === 0x72", "code === 0x72", (sample("database_encoded_program_in_lines"),)),
+    Mutation(
+        "escaped slash ends a run", DATABASE, "return letter === SLASH || isBreakLetter(letter)", "return isBreakLetter(letter)",
+        (sample("database_encoded_program_in_json"),),
+    ),
+    Mutation("letters of line breaks decoded", DATABASE, ".replace(ESCAPED_BREAK, '')", "", (sample("database_encoded_program_in_lines"),)),
+    Mutation(
+        "a run never starts with an escape", DATABASE,
+        "if (code === BACKSLASH) return text.charCodeAt(at - 1) !== BACKSLASH && escapeLength(text, at) > 0;", "if (code === BACKSLASH) return false;",
+        (sample("database_encoded_program_in_lines"),),
+    ),
+    Mutation(
+        "the letter of an escape starts a run", DATABASE, "return IS_BASE64_LETTER[code] === 1 && !endsEscape(text, at);", "return IS_BASE64_LETTER[code] === 1;",
+        (sample("database_honest_base64"),),
+    ),
+    Mutation(
+        "the inside of a run starts a run", DATABASE, "  if (IS_BASE64_LETTER[text.charCodeAt(at - 1)] === 1) return false;\n", "",
+        (sample("database_honest_base64"),),
+    ),
+    Mutation("head of a run cut short", DATABASE, "const HEAD_LETTERS = 768;", "const HEAD_LETTERS = 128;", (sample("database_encoded_program"),)),
+    Mutation("one backslash per escape", DATABASE, "const ESCAPE_BACKSLASHES_MAX = 8;", "const ESCAPE_BACKSLASHES_MAX = 1;", (sample("database_encoded_program_in_json"),)),
+    Mutation("a run's head read to the end of the text", DATABASE, "Math.min(text.length, start + RUN_REACH)", "text.length", (CUT_TEST,)),
+    Mutation(
+        "a later file of the same kind replaces the first", DATABASE, "if (file !== null && !found.encodedFiles.has(file.rule))", "if (file !== null)",
+        (TABLE_TEST,),
+    ),
+    Mutation("table of the same piece not read", DATABASE, "table: insert >= span.from ? tableNameAt(text, insert) : lastTable", "table: lastTable", (TABLE_TEST,)),
+    Mutation(
+        "table not carried to later pieces", DATABASE,
+        "return lastInsert >= span.from ? tableNameAt(piece.text, lastInsert) : lastTable;", "return lastTable;", (CUT_TEST,),
+    ),
+    Mutation("an INSERT without backticks passed over", DATABASE, "const INSERT_START = 'insert into ';", "const INSERT_START = 'insert into `';", (TABLE_TEST,)),
+    Mutation(
+        "the search jumps past the start of a run", DATABASE, "at = breaker >= 0 ? breaker + 1 :", "at = breaker >= 0 ? breaker + ENCODED_MIN_LENGTH :",
+        (sample("database_encoded_program"), sample("database_encoded_code"), sample("database_encoded_archive")),
+    ),
+]
 STEP_3_MUTATIONS: list[Mutation] = [
     *(Mutation(f"finding row removed: {row}", CODE_RULES, f"    {row}\n", "", (guard,)) for row, guard in FINDING_ROWS.items()),
     switch_off("variable variables", PHP_RULES, "isSymbol(token, '$') && (tokens[index + 1]?.kind === 'variable' || isSymbol(tokens[index + 1], '{'))", code_shape("variable_variable")),
@@ -235,6 +294,7 @@ STEP_3_MUTATIONS: list[Mutation] = [
         "open plugin list reads the carried text twice", DATABASE, "continueActiveList(activeList, text.slice(carry.length), found)", "continueActiveList(activeList, text, found)",
         ("test_database.py::test_a_dump_cut_anywhere_reads_the_same",),
     ),
+    *ENCODED_ROW_MUTATIONS,
     Mutation("a copy without a database stays silent", ENGINE, "    if (site.looksLikeWordPress) copy.reporter.report('db.not_found', '', {});\n", "", (sample("uploads_at_archive_root"),)),
 
     Mutation("instruction phrase removed", "scanner/text-rules.js", "  'ignore previous instructions', ", "  ", (sample("ai_instructions"),)),

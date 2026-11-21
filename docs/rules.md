@@ -647,9 +647,10 @@ dump.
 The finding names the table when the line its row stands on tells it. A dump escapes every line
 break inside a value, so a real one ends a statement or a row. In the dumps of the test copies,
 MySQL's mysqldump writes an `INSERT` with its rows on the same line, MariaDB's dump and
-UpdraftPlus write each row on a line of its own that starts with `(` (after spaces, at most). The table is the one of the `INSERT` or
-`REPLACE` (with `IGNORE`, `LOW_PRIORITY` and the like) at the start of that line, or of the line
-whose rows it carries on; of a name with its database in front, the table part. A line of any
+UpdraftPlus write each row on a line of its own that starts with `(` (after spaces, at most).
+The table is the one of the `INSERT` or `REPLACE` (with `IGNORE`, `LOW_PRIORITY` and the like)
+at the start of the row's line or, for a line of rows, of the statement line above them; of a
+name with its database in front, the table part. A line of any
 other statement (`UPDATE`, `CREATE`, a comment) and a name that is not letters, digits, `_` and
 `$`, up to 64 of them, leave the table out. SQL quoted inside a row is not a statement.
 

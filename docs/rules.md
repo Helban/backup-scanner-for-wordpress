@@ -627,32 +627,36 @@ names of AI models are not: WordPress 7 ships an AI client of its own and transl
 name them.
 
 A file can be kept in a row as base64 text, in an option or a post's meta, where no check of the
-copy's files ever sees it. Every run of base64 letters in the dump is decoded from its start the
-way PHP's `base64_decode` reads it: escaped line breaks inside it (mysqldump writes `\n`,
-`chunk_split` puts one every 76 letters) and JSON's escaped slash (`\/`) are read through, with
-1 to 8 backslashes in front of the `n`, `r` or `/`. Any other letter right after a backslash
-belongs to mysqldump's escape (`\0` for a NUL byte, `\Z`, `\t`), and so does an `n` or `r`
-after more than 8 backslashes: the run starts behind it. Runs shorter than 32 letters are left
-alone. Of a longer run the first 768 letters (576 bytes) are decoded, as many of them as lie in
-the run's first 1,015 characters. The run is decoded a second time from behind its first group of
-line breaks, within the same 1,015 characters: a mail keeps its attachment behind a header line
-that ends in letters (`filename=setup.exe`, a blank line, then the base64), and read as one run
-the two would decode out of step. The decoded bytes are judged the way a base64 string in a PHP
-file is: a program by its full header (MZ with the PE mark where the header points, or the ELF
-header) is red; `<?php` anywhere in them, in any letter case, is amber, because PHP kept in the
-database runs only when code reads it back; an archive (zip, gzip, 7z, RAR, tar and the rest) is
-amber, because a plugin may keep one for an honest reason. Each of the three is named once per
-dump.
+copy's files ever sees it. So every run of base64 letters in the dump is decoded from its start,
+the way PHP's `base64_decode` reads it.
 
-The finding names the table when the line its row stands on tells it. A dump escapes every line
-break inside a value, so a real one ends a statement or a row. In the dumps of the test copies,
-MySQL's mysqldump writes an `INSERT` with its rows on the same line, MariaDB's dump and
-UpdraftPlus write each row on a line of its own that starts with `(` (after spaces, at most).
-The table is the one of the `INSERT` or `REPLACE` (with `IGNORE`, `LOW_PRIORITY` and the like)
-at the start of the row's line or, for a line of rows, of the statement line above them; of a
-name with its database in front, the table part. A line of any
-other statement (`UPDATE`, `CREATE`, a comment) and a name that is not letters, digits, `_` and
-`$`, up to 64 of them, leave the table out. SQL quoted inside a row is not a statement.
+Escaped line breaks inside a run are read through. mysqldump writes them as `\n`, and
+`chunk_split` puts one every 76 letters. JSON's escaped slash (`\/`) is read through too. Both
+count with 1 to 8 backslashes in front of the `n`, `r` or `/`. Any other letter right after a
+backslash belongs to mysqldump's escape (`\0` for a NUL byte, `\Z`, `\t`), and so does an `n` or
+`r` after more than 8 backslashes. The run then starts behind it.
+
+Runs shorter than 32 letters are left alone. Of a longer run, the first 768 letters (576 bytes)
+are decoded, as many of them as lie in the run's first 1,015 characters. The run is decoded a
+second time from behind its first group of line breaks, within the same 1,015 characters. That is
+for mail: an attachment sits behind a header line that ends in letters (`filename=setup.exe`, a
+blank line, then the base64), and the two read as one run would decode out of step.
+
+The decoded bytes are judged the way a base64 string in a PHP file is. A program with its full
+header (MZ with the PE mark where the header points, or the ELF header) is red. `<?php` anywhere
+in them, in any letter case, is amber, because PHP kept in the database runs only when code reads
+it back. An archive (zip, gzip, 7z, RAR, tar and the rest) is amber, because a plugin may keep one
+for an honest reason. Each of the three is named once per dump.
+
+The finding names the table when the row's line tells it. A dump escapes every line break inside
+a value, so a real line break ends a statement or a row. In the dumps of the test copies, MySQL's
+mysqldump writes an `INSERT` with its rows on the same line. MariaDB's dump and UpdraftPlus write
+each row on a line of its own that starts with `(`, after spaces at most. The table is taken from
+the `INSERT` or `REPLACE` (with `IGNORE`, `LOW_PRIORITY` and the like) at the start of the row's
+line, or, for a line of rows, from the statement line above them. For a name with its database in
+front, the table part counts. A line of any other statement (`UPDATE`, `CREATE`, a comment) gives
+no table, and neither does a name that is not letters, digits, `_` and `$`, up to 64 of them. SQL
+quoted inside a row is not a statement.
 
 A long base64 text alone is not a finding, and that is narrow on purpose. The dumps of the test
 copies (five sites, one of them packed three ways) gave none of the three findings, and a row

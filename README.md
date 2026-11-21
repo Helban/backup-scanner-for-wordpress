@@ -125,7 +125,7 @@ ones.
 - A way of starting a program that is not on its list. That is why every mu-plugin and drop-in
   is listed for you to read.
 - Most of what a database can hide: administrator accounts added by hand, scheduled tasks, code
-  kept in a row compressed or encrypted before its base64, or PHP without its open tag. A dump
+  kept in a row compressed or encrypted before its base64, or PHP without `<?php`. A dump
   packed any other way than gzip is not read: inside a zip (`.sql.zip`) it is only named, and
   `.sql.bz2` or UpdraftPlus's encrypted `.gz.crypt` is not opened.
 - Code WordPress loads by itself from folders that `wp-config.php` moves elsewhere

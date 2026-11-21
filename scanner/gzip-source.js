@@ -188,13 +188,14 @@ class Cursor {
   }
 }
 
-// Yields the parts of `chunks` (in order, each { offset, bytes }) that lie from `next` to `end`,
-// as long as they follow on without a hole; returns where the yielded bytes end.
+// Yields the parts of `chunks` that lie from `next` to `end`; returns where the yielded bytes end.
+// `chunks` follow on without a gap, the first one starting at or before `next`: a cursor starts
+// at a point at or before the read and its output is one run (cursorFor).
 function* overlapOf(chunks, next, end) {
   let reached = next;
   for (const { offset, bytes } of chunks) {
     const chunkEnd = offset + bytes.length;
-    if (chunkEnd <= reached || offset > reached || reached >= end) continue;
+    if (chunkEnd <= reached || reached >= end) continue;
     const part = bytes.subarray(reached - offset, Math.min(bytes.length, end - offset));
     reached += part.length;
     yield part;

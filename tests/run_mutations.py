@@ -1102,7 +1102,7 @@ TAR_MUTATIONS: list[Mutation] = [
     ),
     Mutation(
         "size field of a link taken as its data", TAR_ARCHIVE, "if (data !== null) size = data.readable ? data.storedBytes : data.size;",
-        "if (data !== null) size = data.size;", (sample("tar_size_without_data"),),
+        "if (data !== null) size = data.size;", (sample("tar_device_with_size"),),
     ),
     Mutation(
         "duplicate tar name not said", TAR_ARCHIVE, "if (!isDirectory && seen.has(name)) problems.push(", "if (false) problems.push(",

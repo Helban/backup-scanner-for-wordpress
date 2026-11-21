@@ -16,7 +16,7 @@ from wporg import (
     NO_CORE_LIST, NOT_FOUND_WITHOUT_CORS, Answer, core_checksums_url, core_list, plugin_checksums_url, plugin_list,
     plugin_vulnerabilities_url,
 )
-from tarcraft import BLOCK, DIRECTORY, END_MARKER, HARD_LINK, SYMLINK, TarMember, craft_tar, from_zip_members, with_gzip
+from tarcraft import BLOCK, CHARACTER_DEVICE, DIRECTORY, END_MARKER, HARD_LINK, SYMLINK, TarMember, craft_tar, from_zip_members, with_gzip
 from zipcraft import FLAG_ENCRYPTED, STORED, SYMLINK_ATTRIBUTES, Member, craft_zip, deflate, unicode_path_extra
 
 Finding = tuple[str, str, str]
@@ -3034,6 +3034,16 @@ SAMPLES: list[Sample] = [
         "tar_size_without_data",
         tar_site_with(TarMember(UPLOADS + "link.jpg", type_flag=SYMLINK, link="photo.jpeg", size_field=f"{BLOCK:011o}\x00".encode())),
         frozenset({red("tar.size_without_data", UPLOADS + "link.jpg"), red("layout.symlink", UPLOADS + "link.jpg")}),
+    ),
+    Sample(
+        # A device holds no data either. Read with its size field, the "picture" would be the next
+        # tar header, which starts like no image.
+        "tar_device_with_size",
+        tar_site_with(
+            TarMember(UPLOADS + "camera.jpeg", type_flag=CHARACTER_DEVICE, size_field=f"{BLOCK:011o}\x00".encode()),
+            TarMember(UPLOADS + "after-device.txt", b"plain text\n"),
+        ),
+        frozenset({red("tar.size_without_data", UPLOADS + "camera.jpeg")}),
     ),
     Sample(
         "tar_file_named_as_folder",

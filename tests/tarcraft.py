@@ -14,6 +14,7 @@ END_MARKER = b"\x00" * (2 * BLOCK)
 FILE = b"0"
 HARD_LINK = b"1"
 SYMLINK = b"2"
+CHARACTER_DEVICE = b"3"
 DIRECTORY = b"5"
 
 

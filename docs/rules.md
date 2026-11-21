@@ -638,11 +638,10 @@ back; an archive (zip, gzip, 7z, RAR, tar and the rest) is amber, because a plug
 for an honest reason. Each of the three is named once per dump, with the table of the `INSERT`
 its row stands in.
 
-A long base64 text alone is not a finding. Honest sites keep pictures and icons that way in posts
-and options. The check is narrow on purpose: the dumps of the test copies (five sites, one of
-them packed three ways) and two dumps of a real site gave none of the three findings, and a row
-planted in each of them was found (2026-11-21). Older sites with years of plugins behind them
-were not measured.
+A long base64 text alone is not a finding, and that is narrow on purpose. The dumps of the test
+copies (five sites, one of them packed three ways) gave none of the three findings, and a row
+planted in each of them was found (2026-11-21). Those are fresh sites. What older sites with
+years of plugins behind them keep in their rows was not measured.
 
 A copy without a dump gets that said under "Not checked", and so does a dump inside a zip found
 in the copy: the database checks need the site around the dump, its plugins and its address.

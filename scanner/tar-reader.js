@@ -60,12 +60,16 @@ const TYPES_WITHOUT_DATA = new Set([TYPE_HARD_LINK, TYPE_SYMLINK, TYPE_DIRECTORY
 //
 // createTarIndexer({ onEntry, maxEntries }) -> { push(bytes), finish() }
 //   onEntry({ name, nameBytes, kind, size, dataOffset, headerOffset, linkName, readable, anomalies })
-//   finish() -> { state, entries, endOffset, anomalies }, state one of
+//   finish() -> { state, entries, endOffset, damagedAt, anomalies }, state one of
 //     ended     - the end marker was found (bytes after it that are not zero: anomaly 'data_after_end')
 //     no_end    - the data stopped at a header boundary without the end marker
 //     truncated - it stopped inside a header or a file's data
-//     damaged   - a header's checksum or size is wrong; nothing after it is listed
+//     damaged   - a header's size field or a long name or pax record is unreadable; nothing
+//                 after it is listed
 //     too_many  - more than maxEntries entries; the rest is not listed
+//   A block that should be a header and whose checksum is wrong is skipped (anomaly
+//   'damaged_header', the first such block at `damagedAt`), and listing goes on at the next
+//   block that is one.
 export const createTarIndexer = ({ onEntry, maxEntries }) => {
   let pending = new Uint8Array(0);
   let offset = 0;
@@ -75,6 +79,7 @@ export const createTarIndexer = ({ onEntry, maxEntries }) => {
   let zerosAfterEnd = 0;
   let entries = 0;
   let endOffset = -1;
+  let damagedAt = -1;
   let outcome = '';
   const archiveAnomalies = new Set();
   // What 'L', 'K' and 'x' records said about the next header, and what 'g' said about all.
@@ -106,7 +111,12 @@ export const createTarIndexer = ({ onEntry, maxEntries }) => {
       return true;
     }
     if (!hasValidChecksum(header)) {
-      stop('damaged');
+      // GNU tar 1.35 and bsdtar (the tar.exe of Windows) skip block by block to the next header
+      // that adds up and unpack what follows; Python's tarfile and busybox stop (measured
+      // 2026-11-21, tools/wp-zip-scan/tar-stage2/probe_damaged_header.py). Listing on as the
+      // first two do keeps those files in the scan.
+      if (damagedAt < 0) damagedAt = headerOffset;
+      archiveAnomalies.add('damaged_header');
       return true;
     }
     const sizeField = readNumber(header.subarray(SIZE_AT, SIZE_AT + SIZE_BYTES));
@@ -279,10 +289,16 @@ export const createTarIndexer = ({ onEntry, maxEntries }) => {
           outcome = 'truncated';
         }
       }
-      return { state: outcome, entries: Math.min(entries, maxEntries), endOffset, anomalies: [...archiveAnomalies] };
+      return { state: outcome, entries: Math.min(entries, maxEntries), endOffset, damagedAt, anomalies: [...archiveAnomalies] };
     },
   };
 };
+
+// The first block of a file is a tar header: POSIX or GNU magic, or (v7, which has none) a
+// checksum that adds up.
+export const looksLikeTar = (firstBlock) => (
+  firstBlock.length >= BLOCK_BYTES && (startsWith(firstBlock, MAGIC_AT, POSIX_MAGIC.slice(0, 5)) || hasValidChecksum(firstBlock))
+);
 
 const NOTHING_NEXT = Object.freeze({ name: null, linkName: null, size: null, realSize: null, sparse: false });
 

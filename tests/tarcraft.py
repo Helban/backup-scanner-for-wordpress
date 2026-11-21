@@ -56,6 +56,21 @@ def record(member: TarMember) -> bytes:
     return header(member) + member.body + b"\x00" * (-len(member.body) % BLOCK)
 
 
+PAX = b"x"
+PAX_SOLARIS = b"X"
+
+
+def pax_record(key: str, value: str, length_text: str = "{}") -> bytes:
+    """One "<length> key=value\\n" record whose length counts the whole record. `length_text`
+    writes that length in another form ("{:#x}" gives "0x2b"), still the right number, which a
+    lax reader accepts and the real tar programs reject."""
+    body = f" {key}={value}\n".encode()
+    length = len(body) + 1
+    while len(length_text.format(length)) + len(body) != length:
+        length = len(length_text.format(length)) + len(body)
+    return length_text.format(length).encode() + body
+
+
 def craft_tar(members: list[TarMember], end: bytes = END_MARKER) -> bytes:
     return b"".join(record(member) for member in members) + end
 

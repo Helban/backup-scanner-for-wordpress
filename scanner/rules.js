@@ -147,6 +147,9 @@ export const RULES = new Map([
 
   // A .tar or .tar.gz (tar-archive.js). Red where programs that unpack it disagree on what it
   // holds, measured with GNU tar 1.35, bsdtar, busybox and Python's tarfile.
+  // A file that starts like a tar of which not one entry can be read (a gzip that holds no tar is
+  // read as a database dump instead, engine.js openCopy).
+  ['tar.not_a_tar', 'not_checked'],
   ['tar.too_many_entries', 'not_checked'],
   ['tar.damaged', 'not_checked'],
   ['tar.truncated', 'not_checked'],
@@ -159,6 +162,7 @@ export const RULES = new Map([
   ['tar.file_named_as_folder', 'red'],
   ['tar.duplicate_name', 'red'],
   ['tar.also_a_zip', 'red'],
+  ['tar.malformed_pax', 'red'],
   ['tar.data_after_end', 'amber'],
 
   ['entry.corrupt_data', 'not_checked'],

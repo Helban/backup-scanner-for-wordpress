@@ -1126,6 +1126,23 @@ TAR_MUTATIONS: list[Mutation] = [
         "  if (tarEntries.length === 0 && listing.state !== 'ended') throw new TarFormatError('not_a_tar');\n", "",
         (sample("archive_signature[tar]"),),
     ),
+    # The pax findings of the Fable review, 2026-11-21.
+    Mutation(
+        "Solaris pax header read as a file", TAR_READER, "const LOCAL_PAX_TYPES = new Set([TYPE_PAX, TYPE_PAX_SOLARIS]);",
+        "const LOCAL_PAX_TYPES = new Set([TYPE_PAX]);", (sample("tar_pax_solaris_name"),),
+    ),
+    Mutation(
+        "pax length read by Number", TAR_READER, "const length = decimalOrNull(decoder.decode(content.subarray(at, space)));",
+        "const length = Number(decoder.decode(content.subarray(at, space)));", (sample("tar_pax_malformed_length"),),
+    ),
+    Mutation(
+        "pax size read by Number", TAR_READER, "const size = decimalOrNull(records.get('size'));", "const size = Number(records.get('size'));",
+        (sample("tar_pax_size_not_decimal"),),
+    ),
+    Mutation(
+        "malformed pax not said", TAR_ARCHIVE, "  if (listing.anomalies.includes('malformed_pax')) problems.push({ code: 'malformed_pax', path: '', params: {} });\n", "",
+        (sample("tar_pax_malformed_length"),),
+    ),
     # Stage 3: a dump dropped by itself, and tars inside the copy.
     Mutation(
         "dump dropped alone not read", ENGINE,

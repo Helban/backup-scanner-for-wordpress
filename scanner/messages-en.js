@@ -574,6 +574,10 @@ const FINDING_TEXT = new Map([
     `Could not be read: ${UNREADABLE_REASONS.get(params.get('reason')) ?? 'unknown reason'}.`
   )],
 
+  ['tar.not_a_tar', () => 'This file starts like a tar archive, but not one entry of it can be read. Nothing was checked.'],
+  ['tar.malformed_pax', () => (
+    'A pax header of the tar is malformed. GNU tar, bsdtar (the tar of Windows) and busybox tar pass over what is malformed in it and unpack the file under its own name, and the scanner checked it so too. Other programs may read the header differently.'
+  )],
   ['tar.too_many_entries', (params) => (
     `The archive holds more than ${withNoun(params.get('entries') ?? 0, 'entry', 'entries')}, more than this scanner takes. Nothing was checked.`
   )],

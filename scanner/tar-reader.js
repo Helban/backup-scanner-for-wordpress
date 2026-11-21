@@ -49,7 +49,13 @@ const TYPE_GNU_LONG_LINK = 0x4b;
 const TYPE_GNU_SPARSE = 0x53;
 const TYPE_GNU_DUMPDIR = 0x44;
 const TYPE_PAX = 0x78;
+// Solaris writes a pax extended header as 'X'. GNU tar 1.35, bsdtar and Python's tarfile apply it
+// like 'x'; read as a file, it let an 'X' record name a mu-plugin the scan never listed
+// (2026-11-21, tools/wp-zip-scan/tar-stage2/probe_extractors.py).
+const TYPE_PAX_SOLARIS = 0x58;
 const TYPE_PAX_GLOBAL = 0x67;
+const LOCAL_PAX_TYPES = new Set([TYPE_PAX, TYPE_PAX_SOLARIS]);
+const DECIMAL = /^[0-9]+$/;
 // Character device, block device, FIFO: no data, nothing to read.
 const DEVICE_TYPES = new Set([0x33, 0x34, 0x36]);
 // The types that carry no data whatever the size field says (GNU tar, Python's tarfile).
@@ -64,12 +70,14 @@ const TYPES_WITHOUT_DATA = new Set([TYPE_HARD_LINK, TYPE_SYMLINK, TYPE_DIRECTORY
 //     ended     - the end marker was found (bytes after it that are not zero: anomaly 'data_after_end')
 //     no_end    - the data stopped at a header boundary without the end marker
 //     truncated - it stopped inside a header or a file's data
-//     damaged   - a header's size field or a long name or pax record is unreadable; nothing
-//                 after it is listed
+//     damaged   - a header's size field is unreadable, or a long name or pax header is larger
+//                 than META_LIMIT_BYTES; nothing after it is listed
 //     too_many  - more than maxEntries entries; the rest is not listed
 //   A block that should be a header and whose checksum is wrong is skipped (anomaly
 //   'damaged_header', the first such block at `damagedAt`), and listing goes on at the next
-//   block that is one.
+//   block that is one. A pax header whose records do not add up, or a pax size that is not a
+//   decimal number, is ignored the way GNU tar, bsdtar and busybox ignore it (anomaly
+//   'malformed_pax'; Python's tarfile refuses such an archive).
 export const createTarIndexer = ({ onEntry, maxEntries }) => {
   let pending = new Uint8Array(0);
   let offset = 0;
@@ -125,7 +133,7 @@ export const createTarIndexer = ({ onEntry, maxEntries }) => {
       return true;
     }
     const type = header[TYPE_AT];
-    if (type === TYPE_GNU_LONG_NAME || type === TYPE_GNU_LONG_LINK || type === TYPE_PAX || type === TYPE_PAX_GLOBAL) {
+    if (type === TYPE_GNU_LONG_NAME || type === TYPE_GNU_LONG_LINK || LOCAL_PAX_TYPES.has(type) || type === TYPE_PAX_GLOBAL) {
       if (sizeField > META_LIMIT_BYTES) {
         stop('damaged');
         return true;
@@ -198,13 +206,11 @@ export const createTarIndexer = ({ onEntry, maxEntries }) => {
     const content = take(meta.padded).subarray(0, meta.size);
     if (meta.type === TYPE_GNU_LONG_NAME) next.name = fieldBytes(content, 0, content.length);
     if (meta.type === TYPE_GNU_LONG_LINK) next.linkName = fieldBytes(content, 0, content.length);
-    if (meta.type === TYPE_PAX || meta.type === TYPE_PAX_GLOBAL) {
+    if (LOCAL_PAX_TYPES.has(meta.type) || meta.type === TYPE_PAX_GLOBAL) {
       const records = readPaxRecords(content);
       if (records === null) {
-        stop('damaged');
-        return true;
-      }
-      if (meta.type === TYPE_PAX_GLOBAL) {
+        archiveAnomalies.add('malformed_pax');
+      } else if (meta.type === TYPE_PAX_GLOBAL) {
         globalPax = new Map([...globalPax, ...records]);
       } else {
         applyPax(records);
@@ -220,14 +226,16 @@ export const createTarIndexer = ({ onEntry, maxEntries }) => {
     if (records.has('path')) next.name = encoder.encode(records.get('path'));
     if (records.has('linkpath')) next.linkName = encoder.encode(records.get('linkpath'));
     if (records.has('size')) {
-      const size = Number(records.get('size'));
-      if (Number.isSafeInteger(size) && size >= 0) next.size = size;
+      // GNU tar ignores a size that is not decimal ("invalid size=0x10"); Number() took 0x10.
+      const size = decimalOrNull(records.get('size'));
+      if (size === null) archiveAnomalies.add('malformed_pax');
+      else next.size = size;
     }
     if ([...records.keys()].some((key) => key.startsWith('GNU.sparse.'))) next.sparse = true;
     // GNU's pax sparse formats: 1.0 names the file in GNU.sparse.name, 0.x and 1.0 give its size.
     if (records.has('GNU.sparse.name')) next.name = encoder.encode(records.get('GNU.sparse.name'));
-    const realSize = Number(records.get('GNU.sparse.realsize') ?? records.get('GNU.sparse.size'));
-    if (Number.isSafeInteger(realSize) && realSize >= 0) next.realSize = realSize;
+    const realSize = decimalOrNull(records.get('GNU.sparse.realsize') ?? records.get('GNU.sparse.size') ?? '');
+    if (realSize !== null) next.realSize = realSize;
   };
 
   const skipData = () => {
@@ -372,6 +380,13 @@ const readNumber = (field) => {
 
 // "<length> <key>=<value>\n" records, the length counting the whole record. null when a record
 // does not add up.
+// A non-negative decimal number below 2^53, or null.
+const decimalOrNull = (text) => {
+  if (!DECIMAL.test(text)) return null;
+  const number = Number(text);
+  return Number.isSafeInteger(number) ? number : null;
+};
+
 const readPaxRecords = (content) => {
   const records = new Map();
   const decoder = new TextDecoder('utf-8');
@@ -380,8 +395,10 @@ const readPaxRecords = (content) => {
     if (content[at] === 0) break;
     const space = content.indexOf(ASCII_SPACE, at);
     if (space < 0) return null;
-    const length = Number(decoder.decode(content.subarray(at, space)));
-    if (!Number.isSafeInteger(length) || length <= space - at || at + length > content.length || content[at + length - 1] !== 0x0a) return null;
+    // Decimal digits only, as GNU tar, bsdtar and busybox read it: Number() also took "0x29",
+    // "+41" and "41e0", and so applied a header those programs ignore.
+    const length = decimalOrNull(decoder.decode(content.subarray(at, space)));
+    if (length === null || length <= space - at || at + length > content.length || content[at + length - 1] !== 0x0a) return null;
     const record = decoder.decode(content.subarray(space + 1, at + length - 1));
     const equals = record.indexOf('=');
     if (equals < 0) return null;

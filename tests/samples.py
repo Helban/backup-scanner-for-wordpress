@@ -16,7 +16,10 @@ from wporg import (
     NO_CORE_LIST, NOT_FOUND_WITHOUT_CORS, Answer, core_checksums_url, core_list, plugin_checksums_url, plugin_list,
     plugin_vulnerabilities_url,
 )
-from tarcraft import BLOCK, CHARACTER_DEVICE, DIRECTORY, END_MARKER, HARD_LINK, SYMLINK, TarMember, craft_tar, from_zip_members, with_gzip
+from tarcraft import (
+    BLOCK, CHARACTER_DEVICE, DIRECTORY, END_MARKER, HARD_LINK, PAX, PAX_SOLARIS, SYMLINK, TarMember, craft_tar, from_zip_members, pax_record,
+    with_gzip,
+)
 from zipcraft import FLAG_ENCRYPTED, STORED, SYMLINK_ATTRIBUTES, Member, craft_zip, deflate, unicode_path_extra
 
 Finding = tuple[str, str, str]
@@ -3047,6 +3050,42 @@ SAMPLES: list[Sample] = [
             TarMember(UPLOADS + "after-device.txt", b"plain text\n"),
         ),
         frozenset({red("tar.size_without_data", UPLOADS + "camera.jpeg")}),
+    ),
+    Sample(
+        # Solaris's 'X' extended header names the file; GNU tar, bsdtar and tarfile apply it.
+        "tar_pax_solaris_name",
+        tar_site_with(
+            TarMember("PaxHeader/readme", pax_record("path", MU_PLUGIN), type_flag=PAX_SOLARIS),
+            TarMember(UPLOADS + "readme.txt", code("exec($target);")),
+        ),
+        frozenset({red("loaded.launch_call", MU_PLUGIN)}),
+    ),
+    Sample(
+        # A pax length that is not decimal: GNU tar, bsdtar and busybox ignore the header and
+        # write the file under its own name, a mu-plugin here.
+        "tar_pax_malformed_length",
+        tar_site_with(
+            TarMember("PaxHeader/loader", pax_record("path", UPLOADS + "notes.txt", length_text="{:#x}"), type_flag=PAX),
+            TarMember(MU_PLUGIN, code("exec($target);")),
+        ),
+        frozenset({red("tar.malformed_pax"), red("loaded.launch_call", MU_PLUGIN)}),
+    ),
+    Sample(
+        # A pax size that is not decimal is passed over, as GNU tar does; the data then runs into
+        # what the header's own size of 0 leaves as the next header.
+        "tar_pax_size_not_decimal",
+        tar_site_with(
+            TarMember("PaxHeader/loader", pax_record("size", "0x10"), type_flag=PAX),
+            TarMember(MU_PLUGIN, b"<?php // the data the header's size leaves out\n", size_field=b"00000000000\x00"),
+        ),
+        frozenset({red("tar.malformed_pax"), red("tar.damaged_header")}),
+    ),
+    Sample(
+        # It starts like a tar, and its only header has a size nobody can read.
+        "tar_nothing_readable",
+        lambda: craft_tar([TarMember(UPLOADS + "late.jpeg", JPEG, size_field=b"\xff" * 12)]),
+        frozenset({unchecked("tar.not_a_tar")}),
+        completed=False,
     ),
     Sample(
         "tar_file_named_as_folder",

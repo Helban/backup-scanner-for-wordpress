@@ -569,6 +569,10 @@ const FINDING_TEXT = new Map([
     `Nie dało się przeczytać: ${UNREADABLE_REASONS.get(params.get('reason')) ?? 'powód nieznany'}.`
   )],
 
+  ['tar.not_a_tar', () => 'Plik zaczyna się jak archiwum tar, ale nie da się z niego przeczytać ani jednej pozycji. Nic nie zostało sprawdzone.'],
+  ['tar.malformed_pax', () => (
+    'Jeden z nagłówków pax tego archiwum jest zniekształcony. GNU tar, bsdtar (tar z Windowsa) i tar z busyboxa pomijają to, co w nim zniekształcone, i rozpakowują plik pod jego własną nazwą. Skaner sprawdził go tak samo. Inne programy mogą ten nagłówek odczytać inaczej.'
+  )],
   ['tar.too_many_entries', (params) => (
     `Archiwum ma ponad ${formatCount(params.get('entries') ?? 0)} ${plural(params.get('entries') ?? 0, { one: 'pozycję', few: 'pozycje', many: 'pozycji' })}, więcej, niż ten skaner przyjmuje. Nic nie zostało sprawdzone.`
   )],

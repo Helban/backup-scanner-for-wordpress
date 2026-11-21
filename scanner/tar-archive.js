@@ -59,6 +59,7 @@ export const openTar = async (file, packing, { maxEntries, alive, limitBytes = T
   if (!isUnpackingCut && listing.state === 'truncated') problems.push({ code: 'truncated', path: '', params: {} });
   if (!isUnpackingCut && listing.state === 'no_end') problems.push({ code: 'no_end', path: '', params: {} });
   if (listing.anomalies.includes('damaged_header')) problems.push({ code: 'damaged_header', path: '', params: { offset: listing.damagedAt } });
+  if (listing.anomalies.includes('malformed_pax')) problems.push({ code: 'malformed_pax', path: '', params: {} });
   const hidesEntries = listing.anomalies.includes('lone_zero_block') && listing.anomalies.includes('data_after_end');
   if (hidesEntries) problems.push({ code: 'data_after_lone_end', path: '', params: { offset: listing.endOffset } });
   else if (listing.anomalies.includes('data_after_end')) problems.push({ code: 'data_after_end', path: '', params: { offset: listing.endOffset } });

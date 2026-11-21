@@ -189,6 +189,11 @@ finding says how:
 - a file whose name ends in a slash: GNU tar makes a folder of it, Python a file. Red;
 - two entries with one name: both are checked, and which one ends up on disk depends on the
   program. Red;
+- a pax header whose record lengths are not decimal (`0x29`, `+41`) or whose size is not: GNU
+  tar, bsdtar and busybox tar pass over what is malformed and unpack the file under its own
+  name; Python's tarfile stops at a header with such a length, or refuses the archive when it is
+  the first. The scanner reads the file as the first three do. Red. A header of type `X`, Solaris's name for a pax header, is
+  applied like `x`, as GNU tar, bsdtar and tarfile apply it;
 - a file that is a tar and a zip at once. Info-ZIP's `unzip` and Python's zipfile find a zip's
   end record near the end of a file and unpack that zip, also when a tar or a .tar.gz lies in
   front of it, while a tar program unpacks the tar. Red. A zip glued behind the tar is not

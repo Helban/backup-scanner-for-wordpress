@@ -528,6 +528,16 @@ CGI or server-side includes at all.
 ## The database
 
 The dump is read as a stream, piece by piece, so a dump of a gigabyte is never held whole.
+A dump is a file named `.sql`, `.sql.gz` or like UpdraftPlus's database file
+(`backup_…-db.gz`, `-db1.gz` and on for further databases). Its first two bytes decide
+whether it is unpacked on the way, not its name: gzip under `.sql` is unpacked, plain text
+under `.sql.gz` is read as it is.
+
+The unpacking is the scanner's own (`scanner/gunzip.js`), not the browser's. UpdraftPlus joins
+one gzip member per table into one file, 14 members for a fresh site, and the browser's
+`DecompressionStream` stops after the first member, which in that file holds 1.3% of the dump
+(Chromium 151 and Firefox 153, measured 2026-11-21). A damaged or cut file is read up to the
+damage, which is named under "Not checked". The unpacking stops at 4 GB, and that is named too.
 
 - Red: `eval` of `base64_decode` stored anywhere in it.
 - Amber: PHP kept by snippet plugins (WPCode rows, a Code Snippets table, either plugin active),
@@ -561,7 +571,8 @@ file of any other size is not read a second time, so a copy of 2 GB is never has
 
 "Not checked" is its own list, next to red and amber, and it is never folded into "nothing
 found". An encrypted entry lands there. So does a 7z, RAR, tar, gzip, bzip2, xz, zstd, cab,
-`.wpress` or phar archive (only zip is opened), a zip inside a zip inside the copy, and
+`.wpress` or phar archive (only zip is opened, and gzip when it is the database dump), a zip
+inside a zip inside the copy, and
 anything past a limit: 64 MB unpacked per nested zip, 512 MB and 60 seconds for all of them,
 200 nested zips, 50,000 entries in one. The finding names the limit. Reading media files
 through has 60 seconds of its own; files it did not reach are counted there too. So is PHP the
@@ -600,8 +611,10 @@ the last one needs an archive built on purpose to fool how names and folders are
 - A way of starting a program that is not on the list. That is why every mu-plugin and
   drop-in is listed for reading, whatever the rules found.
 - Most of what a database can hide: administrator accounts added by hand, scheduled tasks,
-  options holding code. Only the checks listed above run on the dump. A dump packed as
-  `.sql.gz` is not opened at all and lands under "Not checked".
+  options holding code. Only the checks listed above run on the dump.
+- A dump packed in any other way than gzip: inside a zip (`.sql.zip`) it is only named,
+  `.sql.bz2` or UpdraftPlus's encrypted `.gz.crypt` is not opened. Also, a dump whose name is
+  none of the three above, and the rest of a packed dump past 4 GB unpacked.
 
 ### Unusual site layouts
 
@@ -712,3 +725,7 @@ unpacking all of it. With the pictures stored uncompressed the same copy took 23
 Before media files were read through (2026-11-13) the compressed copy took 17.3 to 18.9 s;
 with the comparison off, every one of the copy's 35,398 PHP files is read as code, 18.3 s
 measured then.
+
+A packed dump, 2026-11-21: 514 MB of SQL as a 57 MB `.sql.gz` took 5.3 s in Chromium and 8.4 s
+in Firefox; the same dump as a plain `.sql` took 3.6 to 3.7 s in Chromium. The unpacking alone runs
+at about 280 MB of SQL a second in Node, where Node's own zlib does about 400.

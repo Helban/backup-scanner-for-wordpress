@@ -1,6 +1,9 @@
 """The database dump is read as a stream, in pieces of whatever size the browser hands over. A
 match cut in two by that must still be found, and found once."""
-from samples import SAMPLES_BY_NAME
+from samples import DUMP_EVAL, DUMP_ROWS, SAMPLES_BY_NAME, gzip_members, site_with_database
+
+DATABASE = "scanner/database.js"
+SMALL_UNPACK_LIMIT = {DATABASE: ("const UNPACKED_LIMIT_BYTES = 4 * 1024 ** 3;", "const UNPACKED_LIMIT_BYTES = 1024;")}
 
 # Each shape alone, repeated to 8 MB: every repetition is a match the reader has to judge.
 # Measured 2026-11-13 in Node on 4 MB: plain rows 25-48 ms, "<script " 48 ms; with a script
@@ -16,7 +19,7 @@ TIME_THE_READER = """async ({ rows, bytes }) => {
   const milliseconds = {};
   for (const row of rows) {
     const dump = new TextEncoder().encode(row.repeat(Math.floor(bytes / row.length)));
-    const reader = createDumpReader({ name: 'database.sql', uncompressedSize: dump.length }, () => {});
+    const reader = createDumpReader();
     const started = performance.now();
     for (let at = 0; at < dump.length; at += 65536) reader.feed(dump.subarray(at, at + 65536));
     reader.finish();
@@ -58,7 +61,7 @@ READ_IN_PIECES = """async ({ dump, cuts, pieceBytes }) => {
     instruction: found.instruction,
   });
   const read = (pieces) => {
-    const reader = createDumpReader({ name: 'database.sql', uncompressedSize: bytes.length }, () => {});
+    const reader = createDumpReader();
     for (const piece of pieces) reader.feed(piece);
     reader.finish();
     return summary(reader.found);
@@ -105,3 +108,12 @@ def test_a_dump_cut_anywhere_reads_the_same(page, site_url):
     assert all(read == EXPECTED for read in summaries), next(
         (cut, read) for cut, read in zip([*cuts, "pieces of 97 bytes"], summaries, strict=True) if read != EXPECTED
     )
+
+
+def test_a_packed_dump_is_unpacked_only_to_the_limit(scan_patched):
+    """Past the limit the rest is not read, and that is said: the eval behind 640 KB of rows is not seen."""
+    archive = site_with_database(gzip_members(DUMP_ROWS, DUMP_EVAL), name="database.sql.gz")()
+    found = scan_patched(archive, SMALL_UNPACK_LIMIT)["findings"]
+    assert [(entry["rule"], entry["path"], entry["params"]) for entry in found] == [
+        ("db.unpacked_too_large", "database.sql.gz", {"bytes": 1024}),
+    ]

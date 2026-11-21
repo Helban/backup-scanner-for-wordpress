@@ -1020,6 +1020,47 @@ IMAGE_ROWS = {
     "avif_or_heic": "  { kind: 'avif_or_heic', offset: 4, bytes: [0x66, 0x74, 0x79, 0x70] },\n",
 }
 
+GUNZIP = "scanner/gunzip.js"
+
+
+def unpacked(label: str) -> str:
+    return f"test_gunzip.py::test_gzip_unpacks_like_zlib[{label}]"
+
+
+LIMIT_TEST = "test_database.py::test_a_packed_dump_is_unpacked_only_to_the_limit"
+PACKED_DUMP_MUTATIONS: list[Mutation] = [
+    Mutation(
+        "gzip members after the first not read", GUNZIP, "    members += 1;\n    state = HEADER;", "    members += 1;\n    state = PADDING;",
+        (sample("database_packed_in_members"), unpacked("four members")),
+    ),
+    Mutation("gzip checksum not compared", GUNZIP, "if (crc !== memberCrc || size", "if (size", (unpacked("wrong checksum"),)),
+    Mutation("overlapping match copied at once", GUNZIP, "if (distance >= matchLength) {", "if (true) {", (unpacked("rows, default, level 6"),)),
+    Mutation(
+        "match may reach the member before", GUNZIP, "if (distance > written - memberStart) {", "if (distance > written) {",
+        (unpacked("match reaches the member before"),),
+    ),
+    Mutation(
+        "any byte allowed after zeros behind a member", GUNZIP, "      if (input[at] !== 0) {\n", "      if (false) {\n",
+        (unpacked("member then zeros and text"),),
+    ),
+    Mutation("stored block length not checked", GUNZIP, "if ((length ^ 0xffff) !== complement) {", "if (false) {", (unpacked("stored length without its complement"),)),
+    Mutation("unpacking has no limit", GUNZIP, "    if (emittedBytes > limitBytes) fail('too_large');\n", "", (LIMIT_TEST,)),
+    Mutation("packed dump read as text", DATABASE, "if (GZIP_START.every((byte, index) => start[index] === byte)) {", "if (false) {", (sample("database_packed"),)),
+    Mutation(
+        "every dump unpacked", DATABASE, "if (GZIP_START.every((byte, index) => start[index] === byte)) {", "if (true) {",
+        (sample("database_packing_told_by_content"),),
+    ),
+    Mutation("UpdraftPlus dump name not known", DATABASE, r"|-db\d*\.gz)$/i", r")$/i", (sample("database_packed_in_members"),)),
+    Mutation(".sql.gz name not known", DATABASE, r"|\.sql\.gz|", "|", (sample("database_packed"),)),
+    Mutation("cut packed dump not said", DATABASE, " || unpacking === 'truncated'", "", (sample("database_packed_cut"),)),
+    Mutation("damaged packed dump not said", DATABASE, " || unpacking === 'damaged'", "", (sample("database_packed_with_text_after"),)),
+    switch_off("packed dump past the limit not said", DATABASE, "unpacking === 'too_large'", LIMIT_TEST),
+    Mutation(
+        "packed dump also named as an archive left unopened", ENGINE, "  if (kind === 'gzip' && isDatabaseDump(entry.name)) return;\n", "",
+        (sample("database_packed"), sample("packed_dump_inside_nested_zip")),
+    ),
+]
+
 MUTATIONS: list[Mutation] = [
     *CODE_MUTATIONS,
     *STEP_3_MUTATIONS,
@@ -2793,6 +2834,7 @@ MUTATIONS: list[Mutation] = [
         "archive in text has no rule in other code", CODE_RULES, "    ['encoded_archive', 'unproven.encoded_archive'],\n", "",
         (sample("unproven_code"),),
     ),
+    *PACKED_DUMP_MUTATIONS,
 ]
 
 

@@ -323,6 +323,9 @@ const FINDING_TEXT = new Map([
   ['db.in_nested_archive', (params) => (
     `A database dump of ${sizeOf(params)} inside an archive in the copy. The database checks run only on dumps that lie in the copy itself, so this one was not read.`
   )],
+  ['db.unpacked_too_large', (params) => (
+    `A packed database dump that unpacks to more than ${sizeOf(params)}. Only its first ${sizeOf(params)} were checked.`
+  )],
   ['component.not_compared_past_limit', (params) => {
     const plugins = params.get('plugins') ?? 0;
     const which = plugins === 1
@@ -506,7 +509,7 @@ const FINDING_TEXT = new Map([
       ? `Pages in the database load scripts from 1 outside host: ${params.get('example')}. Check that it belongs there.`
       : `Pages in the database load scripts from ${formatCount(params.get('hosts') ?? 0)} outside hosts: ${params.get('example')}. Check that each one belongs there.`
   )],
-  ['db.not_found', () => 'The copy holds no database dump (.sql), so the database was not checked.'],
+  ['db.not_found', () => 'The copy holds no database dump (.sql, .sql.gz or UpdraftPlus\'s -db.gz), so the database was not checked.'],
   ['text.ai_instruction', (params) => (
     `Holds a sentence aimed at an AI assistant reading the copy ("${params.get('what')}"). What a file says about itself proves nothing; somebody expected an AI to read this.`
   )],

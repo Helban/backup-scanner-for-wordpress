@@ -712,7 +712,7 @@ const describeSite = (entries) => {
     allPlugins,
     themes: folderNames(entries, `${contentRoot}wp-content/themes/`).slice(0, LISTED_COMPONENTS),
     databases: entries
-      .filter((entry) => !entry.isDirectory && extensionOf(entry.name) === '.sql')
+      .filter((entry) => !entry.isDirectory && isDatabaseDump(entry.name))
       .slice(0, LISTED_DATABASES)
       .map((entry) => ({ path: entry.name, bytes: entry.uncompressedSize })),
   };
@@ -1553,6 +1553,9 @@ const checkArchiveHead = (container, { entry, dataStart, extension }, kind) => {
   } else if (nameClass === 'other') {
     reporter.report('layout.archive_unexpected_extension', entry.name, { kind, extension, bytes });
   }
+  // A packed database dump is unpacked by the database check, or named by it when it lies in a
+  // zip found in the copy.
+  if (kind === 'gzip' && isDatabaseDump(entry.name)) return;
   if (!isZipKind(kind)) {
     reporter.report('archive.not_opened', entry.name, { kind, bytes, reason: 'format' });
   } else if (container.isNested) {

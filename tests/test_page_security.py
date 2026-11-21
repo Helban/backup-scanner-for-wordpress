@@ -24,7 +24,7 @@ HTML_SINKS = re.compile(r"innerHTML|outerHTML|insertAdjacentHTML|document\.write
 NETWORK_APIS = re.compile(r"\bfetch\s*\(|XMLHttpRequest|WebSocket|EventSource|sendBeacon|importScripts|\bimport\s*\(")
 WORKER_SIDE_FILES = (
     "worker.js", "engine.js", "entries.js", "checksums.js", "md5.js", "spark-md5.js", "php-text.js",
-    "zip-reader.js", "inflate.js", "crc32.js", "signatures.js", "rules.js", "sanitize.js",
+    "zip-reader.js", "inflate.js", "gunzip.js", "crc32.js", "signatures.js", "rules.js", "sanitize.js",
     "php-lexer.js", "php-rules.js", "code-rules.js", "config-rules.js", "database.js", "text-rules.js",
     "indicators.js", "excerpt.js", "program-scan.js",
 )

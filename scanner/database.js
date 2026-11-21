@@ -13,9 +13,11 @@
 //
 // The text is searched with indexOf, and the few regular expressions only ever see a slice of
 // at most LOOKAHEAD characters, so the cost grows with the size of the dump and nothing else.
+// A dump packed with gzip is unpacked on the way (gunzip.js), whatever its name says.
 
 import { withoutWww } from './config-rules.js';
 import { DAMAGED, PROGRESS_INTERVAL_MS, streamWholeFile } from './entries.js';
+import { createGunzip } from './gunzip.js';
 import { LONGEST_INSTRUCTION, findInstruction } from './text-rules.js';
 
 // Every match is judged with this many characters after it and LOOKBEHIND before it. The tail
@@ -43,21 +45,91 @@ const KEY_TO_VALUE = 64;
 // A serialized plugin path: s:19:"akismet/akismet.php" (mysqldump writes the quotes as \").
 const PLUGIN_PATH = /s:\d+:\\?"([^"/\\]+)\//g;
 
-export const isDatabaseDump = (name) => name.toLowerCase().endsWith('.sql');
+// mysqldump's .sql, the same packed with gzip, and the database file of UpdraftPlus,
+// backup_<date>-<site>-db.gz (-db1.gz and on for further databases; its backup.php).
+const DUMP_NAME = /(?:\.sql|\.sql\.gz|-db\d*\.gz)$/i;
+export const isDatabaseDump = (name) => DUMP_NAME.test(name);
+
+// A packed dump is unpacked no further than this; the rest is named as not checked. A zero bomb
+// of 4 MB reaches it, an honest dump of a site someone runs at home rarely does.
+const UNPACKED_LIMIT_BYTES = 4 * 1024 ** 3;
+const GZIP_START = [0x1f, 0x8b];
 
 // Reads every dump in `dumps` and reports what it finds. Returns the site's host names.
 export const checkDatabases = async (container, dumps, presentPlugins) => {
   const siteHosts = new Set();
   for (const entry of dumps) {
-    const reading = createDumpReader(entry, container.progress);
-    const failure = await streamWholeFile(container, entry, (piece) => reading.feed(piece));
+    const reading = createDumpReader();
+    const input = createDumpInput(reading, container.alive);
+    const reportProgress = createProgress(entry, container.progress);
+    const failure = await streamWholeFile(container, entry, (piece) => {
+      input.push(piece);
+      reportProgress(piece.length);
+    });
+    const unpacking = input.finish();
     reading.finish();
+    container.progress({ stage: 'database', done: entry.uncompressedSize, total: entry.uncompressedSize, path: '' });
     // Data that cannot be reached at all was reported by the first-bytes check already.
-    if (failure === DAMAGED) container.reporter.report('entry.corrupt_data', entry.name, { reason: 'database' });
+    if (failure === DAMAGED || unpacking === 'damaged' || unpacking === 'truncated') {
+      container.reporter.report('entry.corrupt_data', entry.name, { reason: 'database' });
+    }
+    if (unpacking === 'too_large') container.reporter.report('db.unpacked_too_large', entry.name, { bytes: UNPACKED_LIMIT_BYTES });
     reportDump(container.reporter, { path: entry.name, found: reading.found }, presentPlugins);
     for (const host of reading.found.siteHosts) siteHosts.add(host);
   }
   return siteHosts;
+};
+
+// The first two bytes decide whether the dump is unpacked, not its name, which can be wrong
+// either way. finish() returns the state of the unpacking ('ended' for a dump that was not
+// packed).
+const createDumpInput = (reading, alive) => {
+  let start = new Uint8Array(0);
+  let gunzip = null;
+  let isDecided = false;
+  const feed = (piece) => (gunzip === null ? reading.feed(piece) : gunzip.push(piece));
+  return {
+    push(piece) {
+      if (isDecided) {
+        feed(piece);
+        return;
+      }
+      const joined = new Uint8Array(start.length + piece.length);
+      joined.set(start);
+      joined.set(piece, start.length);
+      start = joined;
+      if (start.length < GZIP_START.length) return;
+      isDecided = true;
+      if (GZIP_START.every((byte, index) => start[index] === byte)) {
+        gunzip = createGunzip({
+          onBytes: (bytes) => {
+            reading.feed(bytes);
+            alive();
+          },
+          limitBytes: UNPACKED_LIMIT_BYTES,
+        });
+      }
+      feed(start);
+    },
+    finish() {
+      if (!isDecided) reading.feed(start);
+      return gunzip === null ? 'ended' : gunzip.finish().state;
+    },
+  };
+};
+
+// Progress counts the bytes of the file as stored, which for a packed dump is not what the
+// reader sees.
+const createProgress = (entry, progress) => {
+  let bytes = 0;
+  let lastProgress = -Infinity;
+  return (pieceBytes) => {
+    bytes += pieceBytes;
+    const now = performance.now();
+    if (now - lastProgress <= PROGRESS_INTERVAL_MS) return;
+    lastProgress = now;
+    progress({ stage: 'database', done: bytes, total: entry.uncompressedSize, path: entry.name });
+  };
 };
 
 const reportDump = (reporter, { path, found }, presentPlugins) => {
@@ -76,9 +148,8 @@ const reportDump = (reporter, { path, found }, presentPlugins) => {
 };
 
 // Takes the dump piece by piece (feed), then finish(); `found` holds the result. Exported for
-// the test that cuts one dump at every offset. `progress({ stage, done, total, path })` is the
-// container's.
-export const createDumpReader = (entry, progress) => {
+// the test that cuts one dump at every offset. A piece is read at once and never kept.
+export const createDumpReader = () => {
   const decoder = new TextDecoder('latin1');
   const found = {
     evalOfDecoded: false,
@@ -92,8 +163,6 @@ export const createDumpReader = (entry, progress) => {
   // How many characters at the start of `carry` were judged already (they are only there to
   // be looked back at).
   let judged = 0;
-  let bytes = 0;
-  let lastProgress = -Infinity;
   // The value of active_plugins, while it is still being read across pieces.
   let activeList = null;
 
@@ -123,17 +192,10 @@ export const createDumpReader = (entry, progress) => {
   return {
     found,
     feed(piece) {
-      bytes += piece.length;
       searchPiece(carry + decoder.decode(piece, { stream: true }));
-      const now = performance.now();
-      if (now - lastProgress > PROGRESS_INTERVAL_MS) {
-        lastProgress = now;
-        progress({ stage: 'database', done: bytes, total: entry.uncompressedSize, path: entry.name });
-      }
     },
     finish() {
       searchLast(carry + decoder.decode());
-      progress({ stage: 'database', done: bytes, total: entry.uncompressedSize, path: '' });
     },
   };
 };

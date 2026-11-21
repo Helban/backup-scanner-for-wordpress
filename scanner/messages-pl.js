@@ -324,6 +324,9 @@ const FINDING_TEXT = new Map([
   ['db.in_nested_archive', (params) => (
     `Zrzut bazy (${sizeOf(params)}) w archiwum leżącym w kopii. Baza jest sprawdzana tylko w zrzutach leżących wprost w kopii, więc ten nie został przeczytany.`
   )],
+  ['db.unpacked_too_large', (params) => (
+    `Spakowany zrzut bazy, który po rozpakowaniu ma ponad ${sizeOf(params)}. Sprawdzone zostały tylko jego pierwsze ${sizeOf(params)}.`
+  )],
   ['component.not_compared_past_limit', (params) => {
     const plugins = params.get('plugins') ?? 0;
     if (plugins === 1) {
@@ -501,7 +504,7 @@ const FINDING_TEXT = new Map([
       ? `Strony zapisane w bazie ładują skrypty z obcego hosta: ${params.get('example')}. Sprawdź, czy powinien tam być.`
       : `Strony zapisane w bazie ładują skrypty z obcych hostów (${formatCount(params.get('hosts') ?? 0)}): ${params.get('example')}. Sprawdź, czy każdy z nich powinien tam być.`
   )],
-  ['db.not_found', () => 'W kopii nie ma zrzutu bazy (.sql), więc baza nie została sprawdzona.'],
+  ['db.not_found', () => 'W kopii nie ma zrzutu bazy (.sql, .sql.gz ani -db.gz z UpdraftPlusa), więc baza nie została sprawdzona.'],
   ['text.ai_instruction', (params) => (
     `Zawiera zdanie skierowane do asystenta AI, który czyta kopię („${params.get('what')}”). To, co plik mówi sam o sobie, niczego nie dowodzi. Ktoś liczył na to, że przeczyta to AI.`
   )],

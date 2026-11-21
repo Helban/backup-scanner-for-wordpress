@@ -52,6 +52,7 @@ export const RULES = new Map([
   ['lookup.off', 'not_checked'],
   ['component.not_compared_past_limit', 'not_checked'],
   ['db.in_nested_archive', 'not_checked'],
+  ['db.unpacked_too_large', 'not_checked'],
   // Known vulnerabilities are listed apart and never weigh: an old version is not a trap. Only
   // a lookup that failed is a finding, because "none known" and "not asked" must not look alike.
   ['advisory.not_checked', 'not_checked'],

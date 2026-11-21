@@ -141,6 +141,7 @@ CONFIG_RULES = "scanner/config-rules.js"
 DATABASE = "scanner/database.js"
 TABLE_TEST = "test_database.py::test_a_file_kept_as_base64_is_named_with_its_table"
 CUT_TEST = "test_database.py::test_a_dump_cut_anywhere_reads_the_same"
+NO_TABLE_TEST = "test_database.py::test_a_row_outside_an_insert_names_no_table"
 # A file kept in a row as base64 text (database.js findEncodedFiles).
 ENCODED_ROW_MUTATIONS: list[Mutation] = [
     Mutation(
@@ -148,7 +149,7 @@ ENCODED_ROW_MUTATIONS: list[Mutation] = [
         "  for (const [rule, params] of found.encodedFiles) reporter.report(rule, path, params);\n", "",
         (sample("database_encoded_program"),),
     ),
-    Mutation("base64 runs of any length judged", DATABASE, "run.letters >= ENCODED_MIN_LENGTH ?", "run.letters >= 0 ?", (sample("database_honest_base64"),)),
+    Mutation("base64 runs of any length judged", DATABASE, "if (head.letters < ENCODED_MIN_LENGTH) return;", "if (head.letters < 0) return;", (sample("database_honest_base64"),)),
     Mutation(
         "program kept as base64 in a row not told", DATABASE,
         "  if (packed?.signal === 'encoded_program') return { rule: 'db.encoded_program', what: packed.kind };\n", "",
@@ -169,33 +170,87 @@ ENCODED_ROW_MUTATIONS: list[Mutation] = [
     Mutation("letters of line breaks decoded", DATABASE, ".replace(ESCAPED_BREAK, '')", "", (sample("database_encoded_program_in_lines"),)),
     Mutation(
         "a run never starts with an escape", DATABASE,
-        "if (code === BACKSLASH) return text.charCodeAt(at - 1) !== BACKSLASH && escapeLength(text, at) > 0;", "if (code === BACKSLASH) return false;",
+        "if (code === BACKSLASH) return before !== BACKSLASH && escapeLength(text, at) > 0;", "if (code === BACKSLASH) return false;",
         (sample("database_encoded_program_in_lines"),),
     ),
     Mutation(
-        "the letter of an escape starts a run", DATABASE, "return IS_BASE64_LETTER[code] === 1 && !endsEscape(text, at);", "return IS_BASE64_LETTER[code] === 1;",
+        "the letter of an escape starts a run", DATABASE,
+        "return IS_BASE64_LETTER[code] === 1 && letterRole(text, at) === DATA_LETTER;", "return IS_BASE64_LETTER[code] === 1;",
+        (sample("database_honest_base64"), sample("database_encoded_program_after_nul")),
+    ),
+    Mutation(
+        "the inside of a run starts a run", DATABASE,
+        "  if (IS_BASE64_LETTER[before] === 1 && letterRole(text, at - 1) !== ESCAPED_CHARACTER) return false;\n", "",
         (sample("database_honest_base64"),),
     ),
     Mutation(
-        "the inside of a run starts a run", DATABASE, "  if (IS_BASE64_LETTER[text.charCodeAt(at - 1)] === 1) return false;\n", "",
-        (sample("database_honest_base64"),),
+        "a letter escaped by its backslash taken for a run's", DATABASE,
+        "if (IS_BASE64_LETTER[before] === 1 && letterRole(text, at - 1) !== ESCAPED_CHARACTER) return false;",
+        "if (IS_BASE64_LETTER[before] === 1) return false;",
+        (sample("database_encoded_program_after_nul"),),
+    ),
+    Mutation(
+        "a letter after an odd count of backslashes read as data", DATABASE,
+        "return backslashes % 2 === 0 ? DATA_LETTER : ESCAPED_CHARACTER;", "return DATA_LETTER;",
+        (sample("database_encoded_program_after_nul"), sample("database_encoded_program_after_long_escape")),
+    ),
+    Mutation(
+        "a letter after kept backslashes taken for an escaped one", DATABASE,
+        "return backslashes % 2 === 0 ? DATA_LETTER : ESCAPED_CHARACTER;", "return ESCAPED_CHARACTER;",
+        (sample("database_encoded_program_after_backslash"),),
+    ),
+    Mutation(
+        "n after too many backslashes read as a line break", DATABASE,
+        "if (backslashes <= ESCAPE_BACKSLASHES_MAX && isEscapable) return ESCAPE_LETTER;", "if (isEscapable) return ESCAPE_LETTER;",
+        (sample("database_encoded_program_after_long_escape"),),
+    ),
+    switch_off("no second head behind the first line breaks", DATABASE, "run.afterBreaks >= 0", sample("database_encoded_program_in_mail")),
+    Mutation(
+        "line breaks before the first letter taken as the first group", DATABASE,
+        "isInBreaks = letters > 0 && afterBreaks < 0;", "isInBreaks = afterBreaks < 0;",
+        (sample("database_encoded_program_after_label"),),
+    ),
+    Mutation(
+        "the second head behind the last group of breaks", DATABASE,
+        "isInBreaks = letters > 0 && afterBreaks < 0;", "isInBreaks = letters > 0;",
+        (sample("database_encoded_program_in_mail"),),
     ),
     Mutation("head of a run cut short", DATABASE, "const HEAD_LETTERS = 768;", "const HEAD_LETTERS = 128;", (sample("database_encoded_program"),)),
     Mutation("one backslash per escape", DATABASE, "const ESCAPE_BACKSLASHES_MAX = 8;", "const ESCAPE_BACKSLASHES_MAX = 1;", (sample("database_encoded_program_in_json"),)),
-    Mutation("a run's head read to the end of the text", DATABASE, "Math.min(text.length, start + RUN_REACH)", "text.length", (CUT_TEST,)),
+    Mutation("a run's head read to the end of the text", DATABASE, "const reachEnd = Math.min(text.length, at + RUN_REACH);", "const reachEnd = text.length;", (CUT_TEST,)),
     Mutation(
-        "a later file of the same kind replaces the first", DATABASE, "if (file !== null && !found.encodedFiles.has(file.rule))", "if (file !== null)",
+        "a later file of the same kind replaces the first", DATABASE,
+        "if (file === null || reading.found.encodedFiles.has(file.rule)) return;", "if (file === null) return;",
         (TABLE_TEST,),
     ),
-    Mutation("table of the same piece not read", DATABASE, "table: insert >= span.from ? tableNameAt(text, insert) : lastTable", "table: lastTable", (TABLE_TEST,)),
+    Mutation(
+        "table of the same piece not read", DATABASE,
+        "table: tableOfLine(reading, lineStartOf(reading.text, runStart))", "table: reading.lineTable", (TABLE_TEST,),
+    ),
     Mutation(
         "table not carried to later pieces", DATABASE,
-        "return lastInsert >= span.from ? tableNameAt(piece.text, lastInsert) : lastTable;", "return lastTable;", (CUT_TEST,),
+        "return span.until > span.from ? tableOfLine(reading, lineStartOf(text, span.until - 1)) : lineTable;", "return lineTable;", (CUT_TEST,),
     ),
-    Mutation("an INSERT without backticks passed over", DATABASE, "const INSERT_START = 'insert into ';", "const INSERT_START = 'insert into `';", (TABLE_TEST,)),
+    Mutation(
+        "rows on lines of their own not carried", DATABASE,
+        "if (!ROW_LINE.test(head)) return insertedTable(head);", "return insertedTable(head);", (CUT_TEST,),
+    ),
+    Mutation(
+        "a line of another statement taken for rows", DATABASE,
+        "const ROW_LINE = /^[ \\t]*\\(/;", "const ROW_LINE = /^(?![ \\t]*(?:insert|replace))/i;", (NO_TABLE_TEST,),
+    ),
+    Mutation("REPLACE not read as an insert", DATABASE, "(?:insert|replace)[ \\t]+", "(?:insert)[ \\t]+", (TABLE_TEST,)),
+    Mutation("IGNORE and its kin not read", DATABASE, "(?:(?:low_priority|delayed|high_priority|ignore)[ \\t]+)*", "", (TABLE_TEST,)),
+    Mutation("the database name taken for the table", DATABASE, "(?:(?:`[^`]*`|[\\w$]+)[ \\t]*\\.[ \\t]*)?", "", (TABLE_TEST,)),
+    Mutation("a table name without backticks not read", DATABASE, "(`[^`]*`|[\\w$]+)/i;", "(`[^`]*`)/i;", (TABLE_TEST,)),
+    Mutation("any name taken for a table", DATABASE, "return TABLE_NAME.test(name) ? name : '';", "return name;", (NO_TABLE_TEST,)),
     Mutation(
         "the search jumps past the start of a run", DATABASE, "at = breaker >= 0 ? breaker + 1 :", "at = breaker >= 0 ? breaker + ENCODED_MIN_LENGTH :",
         (sample("database_encoded_program"), sample("database_encoded_code"), sample("database_encoded_archive")),
+    ),
+    Mutation(
+        "the whole text carried to the next piece", DATABASE, "    carry = text.slice(keepFrom);\n", "    carry = text;\n",
+        ("test_database.py::test_slow_dump_baits_grow_with_their_size",),
     ),
 ]
 STEP_3_MUTATIONS: list[Mutation] = [

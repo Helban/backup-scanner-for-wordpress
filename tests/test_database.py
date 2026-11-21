@@ -37,6 +37,32 @@ TIME_THE_READER = """async ({ rows, bytes }) => {
   }
   return milliseconds;
 }"""
+SLOW_BAITS = ["TVqQ" + "A" * 28 + " ", "\\" * 9 + "n"]
+GROWTH_SMALL_BYTES = 4 * 1024 * 1024
+GROWTH_FACTOR = 4
+GROWTH_LIMIT = 6
+# Best of three at the small size; the large one is read once and given up as soon as it has taken
+# more than `limit` times the small one, so a cost that grows with the square fails at once.
+TIME_GROWTH = """async ({ rows, bytes, factor, limit }) => {
+  const { createDumpReader } = await import('/scanner/database.js');
+  const read = (dump, budget) => {
+    const reader = createDumpReader();
+    const started = performance.now();
+    for (let at = 0; at < dump.length; at += 65536) {
+      reader.feed(dump.subarray(at, at + 65536));
+      if (performance.now() - started > budget) return Infinity;
+    }
+    reader.finish();
+    return performance.now() - started;
+  };
+  const growth = {};
+  for (const row of rows) {
+    const dumpOf = (size) => new TextEncoder().encode(row.repeat(Math.ceil(size / row.length)).slice(0, size));
+    const small = Math.min(...[0, 1, 2].map(() => read(dumpOf(bytes), Infinity)));
+    growth[row] = read(dumpOf(bytes * factor), small * limit) / small;
+  }
+  return growth;
+}"""
 FILLER = "INSERT INTO `wp_postmeta` VALUES (1,1,'_edit_lock','1700000000:1');\n" * 60
 PLUGINS = [f"plugin-{number:03d}" for number in range(100)]
 # Longer than the 1 KB the reader looks ahead, so the list itself spans pieces.
@@ -58,7 +84,9 @@ PATTERNS += (
     "INSERT INTO `wp_options` VALUES (4,'sample_blob','" + "word " * 250 + "\\r\\n"
     + in_lines(ROW_PROGRAM_TEXT.replace(b"/", b"\\\\/"), b"\\r\\n").decode() + "','no');\n"
     "INSERT INTO `wp_termmeta` VALUES (9,1,'_far','" + FAR_PHP_TEXT + "');\n"
-    "INSERT INTO `wp_postmeta` VALUES (8,1,'_sample','" + ROW_PHP_TEXT.decode() + "');\n"
+    # MariaDB's dump: the statement on a line of its own, then a row per line, many before PHP.
+    "INSERT INTO `wp_postmeta` VALUES\n" + "(7,1,'_edit_lock','1700000000:1'),\n" * 40
+    + "(8,1,'_sample','" + ROW_PHP_TEXT.decode() + "');\n"
 )
 DUMP = FILLER + PATTERNS + FILLER
 EXPECTED = {
@@ -107,19 +135,40 @@ def test_outside_hosts_are_named_and_the_site_itself_is_not(scan):
     ]
 
 
+def encoded_findings(scan, dump: bytes) -> list:
+    return sorted((entry["rule"], entry["params"]) for entry in scan(site_with_database(dump)())["findings"])
+
+
 def test_a_file_kept_as_base64_is_named_with_its_table(scan):
-    """The first file of each kind is named once, with the table of the INSERT it stands in; an
-    INSERT that writes no backticks leaves the table out rather than borrow the one before it."""
+    """The first file of each kind is named once, with the table of the statement at the start
+    of its line: INSERT IGNORE with the database in front, REPLACE, a plain name. SQL quoted in an
+    earlier row of the same statement is no statement."""
+    quoted_insert = b"(39,7,'_note','To add a user run: INSERT INTO `wp_users` VALUES (...)'),(41,7,"
     dump = (
-        DUMP_ENCODED_PROGRAM + DUMP_ENCODED_CODE
-        + DUMP_ENCODED_ARCHIVE.replace(b"INSERT INTO `wp_options`", b"INSERT INTO wp_options")
+        DUMP_ENCODED_PROGRAM.replace(b"INSERT INTO `wp_options`", b"INSERT IGNORE INTO `site`.`wp_options`")
+        + DUMP_ENCODED_CODE.replace(b"INSERT INTO `wp_postmeta`", b"REPLACE INTO `wp_postmeta`").replace(b"(41,7,", quoted_insert)
+        + DUMP_ENCODED_ARCHIVE.replace(b"INSERT INTO `wp_options`", b"INSERT INTO wp_links")
         + DUMP_ENCODED_PROGRAM_IN_JSON.replace(b"`wp_options`", b"`wp_sitemeta`")
     )
-    found = scan(site_with_database(dump)())["findings"]
-    assert sorted((entry["rule"], entry["params"]) for entry in found) == [
-        ("db.encoded_archive", {"what": "zip", "table": ""}),
+    assert encoded_findings(scan, dump) == [
+        ("db.encoded_archive", {"what": "zip", "table": "wp_links"}),
         ("db.encoded_code", {"table": "wp_postmeta"}),
         ("db.encoded_program", {"what": "windows_program", "table": "wp_options"}),
+    ]
+
+
+def test_a_row_outside_an_insert_names_no_table(scan):
+    """An UPDATE after an INSERT, and a name no WordPress table has: the table is left out rather
+    than borrowed from the line before."""
+    program = ROW_PROGRAM_TEXT
+    dump = (
+        b"INSERT INTO `wp_posts` VALUES (1,'hello');\n"
+        b"UPDATE `wp_options` SET `option_value`='" + program + b"' WHERE `option_id`=40;\n"
+        + DUMP_ENCODED_CODE.replace(b"`wp_postmeta`", b"`wp postmeta; safe`")
+    )
+    assert encoded_findings(scan, dump) == [
+        ("db.encoded_code", {"table": ""}),
+        ("db.encoded_program", {"what": "windows_program", "table": ""}),
     ]
 
 
@@ -139,6 +188,17 @@ def test_dump_baits_cost_about_what_their_size_costs(page, site_url):
     limit = timed[PLAIN_ROW] * BAIT_SLOWDOWN_LIMIT + BAIT_SLACK_MS
     slow = {bait: round(timed[bait]) for bait in DUMP_BAITS if timed[bait] > limit}
     assert slow == {}, f"plain rows {timed[PLAIN_ROW]:.0f} ms"
+
+
+def test_slow_dump_baits_grow_with_their_size(page, site_url):
+    """The two shapes the reader spends most on (measured 2026-11-21 in Node: 32-letter runs that
+    start like a program about 5 times plain rows, nine backslashes before n about 4.6 times) are
+    held to growing with their size: 4 times the bytes may take at most GROWTH_LIMIT times as long.
+    A cost that grows faster than the dump shows here whatever the machine's speed."""
+    page.goto(site_url)
+    growth = page.evaluate(TIME_GROWTH, {"rows": SLOW_BAITS, "bytes": GROWTH_SMALL_BYTES, "factor": GROWTH_FACTOR, "limit": GROWTH_LIMIT})
+    too_fast_growing = {bait: round(ratio, 1) for bait, ratio in growth.items() if ratio > GROWTH_LIMIT}
+    assert too_fast_growing == {}, growth
 
 
 def test_a_dump_cut_anywhere_reads_the_same(page, site_url):

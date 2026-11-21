@@ -56,7 +56,9 @@ const PLUGIN_PATH = /s:\d+:\\?"([^"/\\]+)\//g;
 // (JSON writes \/, which mysqldump makes \\/). PHP's base64_decode skips the breaks, so they
 // are skipped here too. Only the head of a run is decoded: 768 letters are 576 bytes, which
 // reach the PE header of a Windows program at its usual place (byte 128 to 280) and the
-// "ustar" of a tar at byte 257.
+// "ustar" of a tar at byte 257. A run is also judged from behind its first group of line
+// breaks: a mail keeps its attachment behind a header line that ends in letters
+// ("filename=setup.exe\r\n\r\nTVqQ"), and read as one run the two decode out of step.
 const BASE64_ALPHABET = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
 const IS_BASE64_LETTER = new Uint8Array(256);
 for (const letter of BASE64_ALPHABET) IS_BASE64_LETTER[letter.charCodeAt(0)] = 1;
@@ -67,10 +69,24 @@ const isBreakLetter = (code) => code === 0x6e || code === 0x72;
 // Escaping inside escaping doubles the backslashes each time: four levels are 8.
 const ESCAPE_BACKSLASHES_MAX = 8;
 const HEAD_LETTERS = 768;
-// A run is read no further than this from its start, so whatever the piece it starts in, its
-// head is read the same (an escape is up to ESCAPE_BACKSLASHES_MAX + 1 characters).
+// A run, and the second head judged behind its first line breaks, are read no further than this
+// from the run's start, so whatever the piece it starts in, both are read the same (an escape
+// is up to ESCAPE_BACKSLASHES_MAX + 1 characters).
 const RUN_REACH = LOOKAHEAD - ESCAPE_BACKSLASHES_MAX - 1;
-const INSERT_START = 'insert into ';
+// What a base64 letter is, told by the backslashes right in front of it.
+const DATA_LETTER = 0;
+// The n, r or / of an escaped line break or slash: part of a run, never its first letter.
+const ESCAPE_LETTER = 1;
+// The 0 of \0, the Z of \Z, the t of \t: mysqldump's escapes of characters that are no base64
+// letters at all. They belong to their backslash, so a run starts behind them.
+const ESCAPED_CHARACTER = 2;
+// The statement at the start of a line, read this far (a database name, the IGNORE and
+// LOW_PRIORITY words and a 64-character table name in backticks fit).
+const STATEMENT_HEAD = 256;
+const ROW_LINE = /^[ \t]*\(/;
+// INSERT or REPLACE, its optional words, then `db`.`table` or `table`, with or without backticks.
+const INSERT_STATEMENT = /^[ \t]*(?:insert|replace)[ \t]+(?:(?:low_priority|delayed|high_priority|ignore)[ \t]+)*(?:into[ \t]+)?(?:(?:`[^`]*`|[\w$]+)[ \t]*\.[ \t]*)?(`[^`]*`|[\w$]+)/i;
+const TABLE_NAME = /^[A-Za-z0-9_$]{1,64}$/;
 // The breaks of a run taken out before decoding; the backslashes of \/ go with the other
 // characters base64_decode skips.
 const ESCAPED_BREAK = /\\+[nr]/g;
@@ -198,9 +214,9 @@ export const createDumpReader = () => {
   let judged = 0;
   // The value of active_plugins, while it is still being read across pieces.
   let activeList = null;
-  // The table of the last INSERT judged so far, '' before the first one or when its name could
-  // not be read.
-  let lastTable = '';
+  // The table of the rows on the last line judged so far, '' before the first statement, on a
+  // line of another statement or when its name could not be read.
+  let lineTable = '';
 
   // Matches from `judged` on are judged; those starting in the last LOOKAHEAD characters wait
   // for the next piece, which starts with those characters (and LOOKBEHIND before them), so
@@ -219,7 +235,7 @@ export const createDumpReader = () => {
     findScripts(lower, span, found);
     findSiteAddress(lower, span, found);
     // Base64 is case-sensitive, so the runs are read from the text as it is.
-    lastTable = findEncodedFiles({ text, lower }, span, found, lastTable);
+    lineTable = findEncodedFiles(text, span, found, lineTable);
     activeList = findActiveList(text, span, found) ?? activeList;
     found.instruction ??= findInstruction(lower.slice(span.from, span.until + LONGEST_INSTRUCTION));
     const keepFrom = Math.max(0, span.until - LOOKBEHIND);
@@ -293,21 +309,21 @@ const findSiteAddress = (lower, span, found) => {
   }
 };
 
-// Every base64 run that starts inside the span is judged once, by its head. Returns the table
-// of the last INSERT that starts inside the span, for runs in the pieces after it.
+// Every base64 run that starts inside the span is judged once, by its head and by the head behind
+// its first line breaks. Returns the table of the last line judged, for runs in the pieces after.
 //
 // A run of ENCODED_MIN_LENGTH letters spans at least that many characters, each a letter or a
 // backslash. So the search checks the last character of such a stretch first and jumps past any
 // other character it meets, the way a string search skips (Horspool): honest rows, with a
 // space or a quote every few characters, are crossed in steps of up to that length.
-const findEncodedFiles = (piece, span, found, lastTable) => {
+const findEncodedFiles = (text, span, found, lineTable) => {
+  const reading = { text, span, found, lineTable };
   let at = span.from;
   while (at < span.until) {
-    const breaker = lastBreakerBefore(piece.text, at, at + ENCODED_MIN_LENGTH);
-    at = breaker >= 0 ? breaker + 1 : judgeStretch(piece, at, span, { found, lastTable });
+    const breaker = lastBreakerBefore(text, at, at + ENCODED_MIN_LENGTH);
+    at = breaker >= 0 ? breaker + 1 : judgeStretch(reading, at);
   }
-  const lastInsert = piece.lower.lastIndexOf(INSERT_START, span.until - 1);
-  return lastInsert >= span.from ? tableNameAt(piece.text, lastInsert) : lastTable;
+  return span.until > span.from ? tableOfLine(reading, lineStartOf(text, span.until - 1)) : lineTable;
 };
 
 // The last character in [from, to) that cannot be part of a run, or -1.
@@ -322,50 +338,76 @@ const canBeInRun = (code) => IS_BASE64_LETTER[code] === 1 || code === BACKSLASH;
 
 // Judges the runs that start from `start` up to the end of its stretch of run characters (or the
 // end of the span), and returns where the stretch ends.
-const judgeStretch = ({ text, lower }, start, span, { found, lastTable }) => {
+const judgeStretch = (reading, start) => {
+  const { text, span } = reading;
   let at = start;
   for (; at < span.until && canBeInRun(text.charCodeAt(at)); at += 1) {
     if (!startsRun(text, at)) continue;
-    const run = readRun(text, at);
-    const file = run.letters >= ENCODED_MIN_LENGTH ? encodedFileIn(text.slice(at, run.end).replace(ESCAPED_BREAK, '')) : null;
-    if (file !== null && !found.encodedFiles.has(file.rule)) {
-      const insert = lower.lastIndexOf(INSERT_START, at - 1);
-      const { rule, ...params } = file;
-      found.encodedFiles.set(rule, { ...params, table: insert >= span.from ? tableNameAt(text, insert) : lastTable });
-    }
+    const reachEnd = Math.min(text.length, at + RUN_REACH);
+    const run = readRun(text, at, reachEnd);
+    noteEncodedFile(reading, at, run);
+    if (run.afterBreaks >= 0) noteEncodedFile(reading, at, readRun(text, run.afterBreaks, reachEnd));
     // No place inside a run starts another, so the search goes on from its end.
     at = run.end - 1;
   }
   return at;
 };
 
-// A run starts at a letter or an escape that does not go on from a run before it. The letter
-// of an escape (the n of \n) is part of the escape, never a start.
-const startsRun = (text, at) => {
-  if (IS_BASE64_LETTER[text.charCodeAt(at - 1)] === 1) return false;
-  const code = text.charCodeAt(at);
-  if (code === BACKSLASH) return text.charCodeAt(at - 1) !== BACKSLASH && escapeLength(text, at) > 0;
-  return IS_BASE64_LETTER[code] === 1 && !endsEscape(text, at);
+const noteEncodedFile = (reading, runStart, head) => {
+  if (head.letters < ENCODED_MIN_LENGTH) return;
+  const file = encodedFileIn(reading.text.slice(head.start, head.end).replace(ESCAPED_BREAK, ''));
+  if (file === null || reading.found.encodedFiles.has(file.rule)) return;
+  const { rule, ...params } = file;
+  reading.found.encodedFiles.set(rule, { ...params, table: tableOfLine(reading, lineStartOf(reading.text, runStart)) });
 };
 
-// Where the run ends, and how many base64 letters it holds up to there; the end is the place of
-// the first character that is neither, or where the head is complete.
-const readRun = (text, start) => {
-  const reach = Math.min(text.length, start + RUN_REACH);
+// A run starts at a letter or an escape that does not go on from a run before it.
+const startsRun = (text, at) => {
+  const before = text.charCodeAt(at - 1);
+  if (IS_BASE64_LETTER[before] === 1 && letterRole(text, at - 1) !== ESCAPED_CHARACTER) return false;
+  const code = text.charCodeAt(at);
+  if (code === BACKSLASH) return before !== BACKSLASH && escapeLength(text, at) > 0;
+  return IS_BASE64_LETTER[code] === 1 && letterRole(text, at) === DATA_LETTER;
+};
+
+// An escaped line break or slash takes 1 to ESCAPE_BACKSLASHES_MAX backslashes. Otherwise an odd
+// number escapes the letter (mysqldump's \0, \Z, \t), and an even one is that many backslashes
+// kept in the row, the letter after them a letter of its own. The count stops one past
+// ESCAPE_BACKSLASHES_MAX, an odd number, so a longer run of backslashes escapes the letter too.
+const letterRole = (text, at) => {
+  let backslashes = 0;
+  while (backslashes <= ESCAPE_BACKSLASHES_MAX && text.charCodeAt(at - backslashes - 1) === BACKSLASH) backslashes += 1;
+  if (backslashes === 0) return DATA_LETTER;
+  const code = text.charCodeAt(at);
+  const isEscapable = code === SLASH || isBreakLetter(code);
+  if (backslashes <= ESCAPE_BACKSLASHES_MAX && isEscapable) return ESCAPE_LETTER;
+  return backslashes % 2 === 0 ? DATA_LETTER : ESCAPED_CHARACTER;
+};
+
+// The run's head from `start`: where it ends, how many base64 letters it holds, and where the
+// letters behind its first group of line breaks start (-1 when there are none). Breaks before the
+// first letter do not count: a value that opens with a blank line keeps its second start for the
+// breaks behind its first line. It ends at the first character that is neither a letter nor an
+// escape, at `reachEnd`, or where the head is complete.
+const readRun = (text, start, reachEnd) => {
   let at = start;
   let letters = 0;
-  while (at < reach && letters < HEAD_LETTERS) {
-    if (IS_BASE64_LETTER[text.charCodeAt(at)] === 1) {
-      at += 1;
+  let afterBreaks = -1;
+  let isInBreaks = false;
+  while (at < reachEnd && letters < HEAD_LETTERS) {
+    const isLetter = IS_BASE64_LETTER[text.charCodeAt(at)] === 1;
+    const length = isLetter ? 1 : escapeLength(text, at);
+    if (length === 0) break;
+    if (!isLetter && isBreakLetter(text.charCodeAt(at + length - 1))) {
+      isInBreaks = letters > 0 && afterBreaks < 0;
+    } else {
+      if (isInBreaks) afterBreaks = at;
+      isInBreaks = false;
       letters += 1;
-      continue;
     }
-    const escape = escapeLength(text, at);
-    if (escape === 0) break;
-    at += escape;
-    if (text.charCodeAt(at - 1) === SLASH) letters += 1;
+    at += length;
   }
-  return { end: at, letters };
+  return { start, end: at, letters, afterBreaks };
 };
 
 // The length of the escape whose backslashes start at `at`, 0 when none starts there.
@@ -375,14 +417,6 @@ const escapeLength = (text, at) => {
   if (backslashes === 0 || backslashes > ESCAPE_BACKSLASHES_MAX) return 0;
   const letter = text.charCodeAt(at + backslashes);
   return letter === SLASH || isBreakLetter(letter) ? backslashes + 1 : 0;
-};
-
-const endsEscape = (text, at) => {
-  const code = text.charCodeAt(at);
-  if (code !== SLASH && !isBreakLetter(code)) return false;
-  let backslashes = 0;
-  while (backslashes <= ESCAPE_BACKSLASHES_MAX && text.charCodeAt(at - backslashes - 1) === BACKSLASH) backslashes += 1;
-  return backslashes > 0 && backslashes <= ESCAPE_BACKSLASHES_MAX;
 };
 
 // The judgment of a base64 string in a PHP file (php-rules.js), reused: a program by its full
@@ -395,15 +429,29 @@ const encodedFileIn = (letters) => {
   return packed === null ? null : { rule: 'db.encoded_archive', what: packed.kind };
 };
 
-// The name between the backticks after INSERT INTO (the dumps of mysqldump/MariaDB and of
-// UpdraftPlus in the test corpus all write them), '' when there are none or the name is too long
-// to be one.
-const tableNameAt = (text, at) => {
-  const nameStart = at + INSERT_START.length;
-  if (text[nameStart] !== '`') return '';
-  const near = text.slice(nameStart + 1, nameStart + 1 + TABLE_NAME_REACH);
-  const end = near.indexOf('`');
-  return end > 0 ? near.slice(0, end) : '';
+const lineStartOf = (text, at) => (at <= 0 ? 0 : text.lastIndexOf('\n', at - 1) + 1);
+
+// The table whose rows the line starting at `lineStart` holds. Every dumper escapes a line break
+// inside a value, so a real one ends a statement or a row: mysqldump writes a statement with its
+// rows on one line, MariaDB's dump and UpdraftPlus a row per line starting with "(" (the dumps of
+// the test copies). A line of any other statement (CREATE, LOCK, a comment) holds no rows. A line
+// before the span was judged with an earlier piece: its table is `lineTable` ('' before the dump's
+// first line).
+const tableOfLine = ({ text, span, lineTable }, lineStart) => {
+  for (let at = lineStart; at >= span.from; at = at > 0 ? lineStartOf(text, at - 1) : -1) {
+    const head = text.slice(at, at + STATEMENT_HEAD);
+    if (!ROW_LINE.test(head)) return insertedTable(head);
+  }
+  return lineTable;
+};
+
+// The table an INSERT or REPLACE at the start of `head` writes to, the last part of a name with
+// its database in front; '' for any other statement or a name that is not a WordPress table's.
+const insertedTable = (head) => {
+  const statement = INSERT_STATEMENT.exec(head);
+  if (statement === null) return '';
+  const name = statement[1].replaceAll('`', '');
+  return TABLE_NAME.test(name) ? name : '';
 };
 
 // The serialized list is read from the quote that opens it to the quote that closes it; it

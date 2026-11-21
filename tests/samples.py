@@ -843,6 +843,21 @@ DUMP_ENCODED_PROGRAM_IN_LINES = (
 DUMP_ENCODED_PROGRAM_IN_JSON = (
     b"INSERT INTO `wp_options` VALUES (44,'sample_settings','{\\\"file\\\":\\\"" + ROW_PROGRAM_TEXT.replace(b"/", b"\\\\/") + b"\\\"}','no');\n"
 )
+# A program behind mysqldump's \0 (a NUL kept in the value): the 0 belongs to its backslash. And
+# behind a backslash kept in the value (\\), where the letter after it is the program's own.
+DUMP_ENCODED_PROGRAM_AFTER_NUL = b"INSERT INTO `wp_options` VALUES (51,'sample_nul','\\0" + ROW_PROGRAM_TEXT + b"','no');\n"
+DUMP_ENCODED_PROGRAM_AFTER_BACKSLASH = b"INSERT INTO `wp_options` VALUES (52,'sample_slash','\\\\" + ROW_PROGRAM_TEXT + b"','no');\n"
+# Nine backslashes and n (four kept backslashes and a line break): more than an escaped break
+# takes, so the n belongs to them and the program after it starts a run.
+DUMP_ENCODED_PROGRAM_AFTER_LONG_ESCAPE = b"INSERT INTO `wp_options` VALUES (55,'sample_long_escape','" + b"\\" * 9 + b"n" + ROW_PROGRAM_TEXT + b"','no');\n"
+# A mail as PHPMailer writes an attachment, kept by a mail log: the header line ends in letters,
+# a blank line, the base64 in lines of 76.
+DUMP_ENCODED_PROGRAM_IN_MAIL = (
+    b"INSERT INTO `wp_options` VALUES (53,'sample_mail_log','Content-Disposition: attachment; filename=setup.exe\\r\\n\\r\\n"
+    + in_lines(ROW_PROGRAM_TEXT, b"\\r\\n") + b"','no');\n"
+)
+# The same with a line break before the label line: the breaks behind the label still count.
+DUMP_ENCODED_PROGRAM_AFTER_LABEL = b"INSERT INTO `wp_options` VALUES (54,'sample_label','\\r\\ninstaller\\r\\n" + ROW_PROGRAM_TEXT + b"','no');\n"
 # Base64 that honest sites keep: a picture in a post, a hash, a sentence. Then what the reader
 # leaves alone on purpose: a run of PHP too short to be judged (behind line breaks, so that it
 # lies in a stretch long enough to be looked at), and PHP past the head of a run, once right
@@ -2794,6 +2809,31 @@ SAMPLES: list[Sample] = [
         frozenset({red("db.encoded_program", "database.sql.gz")}),
     ),
     Sample("database_honest_base64", site_with_database(DUMP_HONEST_BASE64), frozenset()),
+    Sample(
+        "database_encoded_program_after_nul",
+        site_with_database(DUMP_ENCODED_PROGRAM_AFTER_NUL),
+        frozenset({red("db.encoded_program", "database.sql")}),
+    ),
+    Sample(
+        "database_encoded_program_after_backslash",
+        site_with_database(DUMP_ENCODED_PROGRAM_AFTER_BACKSLASH),
+        frozenset({red("db.encoded_program", "database.sql")}),
+    ),
+    Sample(
+        "database_encoded_program_after_long_escape",
+        site_with_database(DUMP_ENCODED_PROGRAM_AFTER_LONG_ESCAPE),
+        frozenset({red("db.encoded_program", "database.sql")}),
+    ),
+    Sample(
+        "database_encoded_program_in_mail",
+        site_with_database(DUMP_ENCODED_PROGRAM_IN_MAIL),
+        frozenset({red("db.encoded_program", "database.sql")}),
+    ),
+    Sample(
+        "database_encoded_program_after_label",
+        site_with_database(DUMP_ENCODED_PROGRAM_AFTER_LABEL),
+        frozenset({red("db.encoded_program", "database.sql")}),
+    ),
     Sample(
         "ai_instructions",
         site_with_database(

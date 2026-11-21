@@ -147,7 +147,6 @@ export const RULES = new Map([
 
   // A .tar or .tar.gz (tar-archive.js). Red where programs that unpack it disagree on what it
   // holds, measured with GNU tar 1.35, bsdtar, busybox and Python's tarfile.
-  ['tar.not_a_tar', 'not_checked'],
   ['tar.too_many_entries', 'not_checked'],
   ['tar.damaged', 'not_checked'],
   ['tar.truncated', 'not_checked'],
@@ -169,6 +168,8 @@ export const RULES = new Map([
   ['scan.other_wordpress', 'not_checked'],
   ['scan.other_copy', 'not_checked'],
   ['scan.content_part', 'not_checked'],
+  // A database dump dropped on the page by itself (engine.js scanDumpAlone).
+  ['scan.dump_only', 'not_checked'],
   ['scan.stalled', 'not_checked'],
   ['scan.failed', 'not_checked'],
 ]);

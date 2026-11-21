@@ -173,11 +173,11 @@ const advisoryExample = (params) => {
 };
 
 const NOT_OPENED_REASONS = new Map([
-  ['format', 'Inside the copy this scanner opens zip archives only, so the contents were not checked.'],
+  ['format', 'Inside the copy this scanner opens zip and tar archives only, so the contents were not checked.'],
   ['depth', 'It sits inside another archive, and only one level is opened.'],
   ['too_large', 'It unpacks to more than 64 MB, so it was not opened.'],
   ['too_many_entries', 'It lists more than 50,000 entries, so it was not opened.'],
-  ['damaged', 'It starts like a zip but cannot be read as one.'],
+  ['damaged', 'It starts like an archive this scanner opens but cannot be read as one.'],
   ['multi_part', 'It is one part of a multi-part zip, so it was not opened.'],
   ['time', 'Reading it took longer than 10 seconds, so the rest of it was not checked.'],
   // The three budget reasons also close a line about a group of archives, so they name none.
@@ -574,7 +574,6 @@ const FINDING_TEXT = new Map([
     `Could not be read: ${UNREADABLE_REASONS.get(params.get('reason')) ?? 'unknown reason'}.`
   )],
 
-  ['tar.not_a_tar', () => 'A gzip file that holds no tar archive this scanner can read. Nothing was checked.'],
   ['tar.too_many_entries', (params) => (
     `The archive holds more than ${withNoun(params.get('entries') ?? 0, 'entry', 'entries')}, more than this scanner takes. Nothing was checked.`
   )],
@@ -609,6 +608,9 @@ const FINDING_TEXT = new Map([
   ['scan.not_wordpress', () => 'No wp-includes/version.php, no wp-config.php and no wp-content folder. This does not look like a WordPress copy.'],
   ['scan.content_part', () => (
     'What this archive holds looks like the inside of wp-content, with no wp-content folder above it. UpdraftPlus saves a backup as several zips like this: the plugins, the themes, the uploads and the rest, each on its own. The scanner checked this archive as the inside of wp-content and did not see the other parts of the backup, so scan them too.'
+  )],
+  ['scan.dump_only', () => (
+    'This file holds no archive, so it was read as a database dump on its own: the database checks ran, the checks of a site\'s files had nothing to look at. Whether the plugins the dump calls active are in the site cannot be told without the site\'s files, so scan the backup of the files too.'
   )],
   ['scan.other_wordpress', () => (
     'Another WordPress lies in this folder. One site per scan is compared with wordpress.org, the one nearest the top of the archive; this one was not, and neither were its plugins. Its files are judged as unknown code.'

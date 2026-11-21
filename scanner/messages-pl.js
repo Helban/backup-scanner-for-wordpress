@@ -190,11 +190,11 @@ const advisoryExample = (params) => {
 };
 
 const NOT_OPENED_REASONS = new Map([
-  ['format', 'Wewnątrz kopii ten skaner otwiera tylko archiwa zip, więc zawartość nie została sprawdzona.'],
+  ['format', 'Wewnątrz kopii ten skaner otwiera tylko archiwa zip i tar, więc zawartość nie została sprawdzona.'],
   ['depth', 'Leży w innym archiwum, a skaner otwiera tylko jeden poziom.'],
   ['too_large', 'Po rozpakowaniu ma ponad 64 MB, więc skaner go nie otworzył.'],
   ['too_many_entries', 'Ma w spisie ponad 50 000 pozycji, więc skaner go nie otworzył.'],
-  ['damaged', 'Zaczyna się jak zip, ale nie da się go przeczytać jako zip.'],
+  ['damaged', 'Zaczyna się jak archiwum, które ten skaner otwiera, ale nie da się go tak przeczytać.'],
   ['multi_part', 'To jedna część wieloczęściowego zipa, więc skaner jej nie otworzył.'],
   ['time', 'Czytanie trwało ponad 10 sekund, więc reszta nie została sprawdzona.'],
   ['budget_count', 'Kopia ma ponad 200 archiwów, a skaner otwiera pierwsze 200.'],
@@ -569,7 +569,6 @@ const FINDING_TEXT = new Map([
     `Nie dało się przeczytać: ${UNREADABLE_REASONS.get(params.get('reason')) ?? 'powód nieznany'}.`
   )],
 
-  ['tar.not_a_tar', () => 'Plik gzip, w którym nie ma archiwum tar, które ten skaner umie przeczytać. Nic nie zostało sprawdzone.'],
   ['tar.too_many_entries', (params) => (
     `Archiwum ma ponad ${formatCount(params.get('entries') ?? 0)} ${plural(params.get('entries') ?? 0, { one: 'pozycję', few: 'pozycje', many: 'pozycji' })}, więcej, niż ten skaner przyjmuje. Nic nie zostało sprawdzone.`
   )],
@@ -602,6 +601,9 @@ const FINDING_TEXT = new Map([
   ['scan.not_wordpress', () => 'Nie ma wp-includes/version.php, wp-config.php ani folderu wp-content. To nie wygląda na kopię WordPressa.'],
   ['scan.content_part', () => (
     'Zawartość tego archiwum wygląda jak wnętrze folderu wp-content, ale samego folderu wp-content w nim nie ma. UpdraftPlus zapisuje kopię w kilku takich zipach: osobno wtyczki, motywy, uploads i resztę. Skaner sprawdził to archiwum jako wnętrze wp-content i nie widział pozostałych części tej kopii, więc zeskanuj je osobno.'
+  )],
+  ['scan.dump_only', () => (
+    'W tym pliku nie ma archiwum, więc skaner przeczytał go jako samą kopię bazy danych: sprawdzenia bazy przeszły, a sprawdzenia plików strony nie miały czego oglądać. Bez plików strony nie da się ustalić, czy wtyczki, które baza nazywa aktywnymi, na niej są, więc zeskanuj też kopię plików.'
   )],
   ['scan.other_wordpress', () => (
     'W tym folderze leży drugi WordPress. Jeden skan porównuje z wordpress.org jedną stronę, tę najbliżej początku archiwum. Ta nie została porównana, jej wtyczki też nie. Jej pliki są oceniane jak nieznany kod.'

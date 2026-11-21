@@ -13,8 +13,8 @@ SMALL_UNPACK_LIMIT = {TAR_ARCHIVE: (
 )}
 FEW_ENTRIES = 3
 FEW_ENTRIES_LIMIT = {ENGINE: (
-    "const opened = await openTar(file, packing, { maxEntries: MAX_ENTRIES, alive });",
-    f"const opened = await openTar(file, packing, {{ maxEntries: {FEW_ENTRIES}, alive }});",
+    "opened = await openTar(file, packing, { maxEntries: MAX_ENTRIES, alive });",
+    f"opened = await openTar(file, packing, {{ maxEntries: {FEW_ENTRIES}, alive }});",
 )}
 
 
@@ -32,6 +32,15 @@ def test_too_many_entries_stop_the_scan(scan_patched):
     report = scan_patched(tar_site_with()(), FEW_ENTRIES_LIMIT)
     assert finding_keys(report) == {unchecked("tar.too_many_entries")}
     assert report["completed"] is False
+
+
+def test_a_nested_archive_not_opened_says_why(scan):
+    """A gzip holding no tar is a format the scanner does not open; a tar that cannot be listed is damaged."""
+    found = scan(SAMPLES_BY_NAME["nested_gzip_without_tar"].build())["findings"]
+    assert [entry["params"]["reason"] for entry in found if entry["rule"] == "archive.not_opened"] == ["format"]
+    found = scan(SAMPLES_BY_NAME["archive_signature[tar]"].build())["findings"]
+    reasons = {entry["path"]: entry["params"]["reason"] for entry in found if entry["rule"] == "archive.not_opened"}
+    assert reasons and set(reasons.values()) == {"damaged"}
 
 
 def test_the_name_does_not_decide_the_format(scan):

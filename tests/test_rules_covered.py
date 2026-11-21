@@ -16,8 +16,8 @@ COVERED_IN_PAGE_BEHAVIOUR = {"scan.stalled", "scan.failed"}
 # ever built here.
 COVERED_BY_PATCHED_SCANNER = {
     "code.time_limit", "archive.tail_not_checked", "indicator.known_file", "indicator.known_upload", "db.unpacked_too_large",
-    # test_tar.py: 16 GB unpacked and a million entries, patched down.
-    "tar.gzip_too_large", "tar.too_many_entries",
+    # test_tar.py: a million entries, patched down.
+    "tar.too_many_entries",
 }
 
 

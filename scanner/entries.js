@@ -22,7 +22,7 @@ export const isReadable = (entry) => !entry.unreadable && !entry.isEncrypted && 
 // The entry's local header and the first `wantPacked` bytes of its data. `readAhead` is how
 // much of the file the source window may take in on the way, for the entries that follow.
 export const locateData = async ({ source, archive }, entry, { wantPacked, readAhead }) => {
-  if (archive.format === 'tar') return locateTarData(source, entry, { wantPacked, readAhead });
+  if (BARE_FORMATS.has(archive.format)) return locateBareData(source, entry, { wantPacked, readAhead });
   const room = archive.directoryStart - entry.headerOffset;
   if (room < LOCAL_HEADER_BYTES) return { unreadable: 'out_of_bounds' };
   const guess = LOCAL_HEADER_BYTES + entry.nameBytes.length + entry.extraLength + LOCAL_EXTRA_SLACK + wantPacked;
@@ -38,14 +38,16 @@ export const locateData = async ({ source, archive }, entry, { wantPacked, readA
   return { header, packed: bytes.subarray(header.headerBytes, needed) };
 };
 
-// A tar entry's data starts at headerOffset (tar-archive.js); the reader of the archive already
-// checked each header, so there is nothing to compare here.
-const TAR_HEADER = Object.freeze({ signatureFound: true, headerBytes: 0, complete: true, differences: [], localName: '' });
+// Entries with no header of their own in front of the data: a tar's (tar-archive.js; the reader
+// of the archive already checked each header) and a dump dropped by itself (engine.js
+// dumpAlone). Their data starts at headerOffset, and there is nothing to compare.
+const BARE_FORMATS = new Set(['tar', 'dump']);
+const NO_HEADER = Object.freeze({ signatureFound: true, headerBytes: 0, complete: true, differences: [], localName: '' });
 
-const locateTarData = async (source, entry, { wantPacked, readAhead }) => {
+const locateBareData = async (source, entry, { wantPacked, readAhead }) => {
   if (entry.headerOffset + entry.compressedSize > source.size) return { unreadable: 'out_of_bounds' };
   const packed = wantPacked === 0 ? new Uint8Array(0) : await source.view(entry.headerOffset, wantPacked, readAhead);
-  return { header: TAR_HEADER, packed };
+  return { header: NO_HEADER, packed };
 };
 
 export const readSmallFile = async (container, entry) => {

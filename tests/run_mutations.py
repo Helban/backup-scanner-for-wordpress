@@ -798,7 +798,7 @@ CODE_MUTATIONS: list[Mutation] = [
     ),
     Mutation(
         "the hosts taken as the site kept from the visitor", ENGINE,
-        "  emit({ type: 'site_hosts', hosts: [...siteHosts].slice(0, LISTED_SITE_HOSTS) });\n", "",
+        "a host of their own.\n  emit({ type: 'site_hosts', hosts: [...siteHosts].slice(0, LISTED_SITE_HOSTS) });\n", "a host of their own.\n",
         ("test_database.py::test_the_hosts_taken_as_the_site_are_shown",),
     ),
     Mutation(
@@ -1122,9 +1122,41 @@ TAR_MUTATIONS: list[Mutation] = [
         (TAR_TEST + "test_too_many_entries_stop_the_scan",),
     ),
     Mutation(
-        "gzip without a tar read as an empty archive", TAR_ARCHIVE,
+        "a tar listing nothing read as an empty archive", TAR_ARCHIVE,
         "  if (tarEntries.length === 0 && listing.state !== 'ended') throw new TarFormatError('not_a_tar');\n", "",
-        (sample("tar_gzip_without_tar"),),
+        (sample("archive_signature[tar]"),),
+    ),
+    # Stage 3: a dump dropped by itself, and tars inside the copy.
+    Mutation(
+        "dump dropped alone not read", ENGINE,
+        "      if (packing === 'gzip' && error instanceof TarFormatError && error.code === 'not_a_tar') return dumpAlone(file);\n", "",
+        (sample("dump_alone_packed"), sample("dump_alone_any_name")),
+    ),
+    Mutation(
+        "plain .sql dropped alone not read", ENGINE, "&& PLAIN_DUMP_NAME.test(nameOfFile(file))) return dumpAlone(file);",
+        "&& false) return dumpAlone(file);", (sample("dump_alone_plain"),),
+    ),
+    Mutation(
+        "any text dropped alone read as a dump", ENGINE, "&& PLAIN_DUMP_NAME.test(nameOfFile(file))) return dumpAlone(file);",
+        ") return dumpAlone(file);", (sample("plain_text_alone"),),
+    ),
+    Mutation(
+        "missing plugins said for a dump alone", ENGINE, "if (rule !== 'db.active_plugin_missing') reporter.report(", "if (true) reporter.report(",
+        (sample("dump_alone_plain"),),
+    ),
+    Mutation("dump alone not said", ENGINE, "  reporter.report('scan.dump_only', '', {});\n", "", (sample("dump_alone_packed"),)),
+    Mutation("tar in the copy not opened", ENGINE, "if (!isZipKind(kind) && !TAR_KINDS.has(kind)) {", "if (!isZipKind(kind)) {", (sample("nested_tar"), sample("nested_tar_gz"))),
+    Mutation(
+        "nested tar read as a zip", ENGINE, "  if (!TAR_KINDS.has(kind)) return { source:", "  if (true) return { source:",
+        (sample("nested_tar"), sample("nested_tar_damaged_header")),
+    ),
+    Mutation(
+        "nested gzip without a tar called damaged", ENGINE, "error.code === 'not_a_tar' && candidate.kind === 'gzip' ? 'format'",
+        "false ? 'format'", (TAR_TEST + "test_a_nested_archive_not_opened_says_why",),
+    ),
+    Mutation(
+        "nested tar.gz unpacks to the copy's limit", ENGINE, ", limitBytes: NESTED_UNPACKED_LIMIT_BYTES });", " });",
+        (sample("nested_tar_gz_past_limit"),),
     ),
     Mutation(
         "tar data past the end read", ENTRIES,
@@ -1134,7 +1166,7 @@ TAR_MUTATIONS: list[Mutation] = [
     Mutation("space between tar files accounted for", ENGINE, "const accountsForSpace = archive.format !== 'tar';", "const accountsForSpace = true;", (sample("tar_clean"),)),
     Mutation(
         "tar data looked for behind a zip header", ENTRIES,
-        "  if (archive.format === 'tar') return locateTarData(source, entry, { wantPacked, readAhead });\n", "", (sample("tar_clean"),),
+        "  if (BARE_FORMATS.has(archive.format)) return locateBareData(source, entry, { wantPacked, readAhead });\n", "", (sample("tar_clean"), sample("dump_alone_plain")),
     ),
     Mutation("checksum compared on tar entries", ENGINE, "isWholeFile && entry.crc32 !== null && crc32(content)", "isWholeFile && crc32(content)", (sample("tar_clean"),)),
     Mutation(
@@ -2120,7 +2152,7 @@ MUTATIONS: list[Mutation] = [
     ),
     Mutation(
         "names read as written, not as unpacked", ENGINE,
-        "const unpacked = asUnpacked(await openCopy(reading.source, reading, alive));", "const unpacked = await openCopy(reading.source, reading, alive);",
+        "const unpacked = asUnpacked(opened);", "const unpacked = opened;",
         (sample("always_loaded_code_written_with_dot_segments"), sample("updraftplus_part_written_with_a_dot_folder")),
     ),
     Mutation(
@@ -2155,7 +2187,7 @@ MUTATIONS: list[Mutation] = [
     ),
     Mutation(
         "names inside a nested zip read as written", ENGINE,
-        "const archive = asUnpacked(await openZip(blob, NESTED_MAX_ENTRIES));", "const archive = await openZip(blob, NESTED_MAX_ENTRIES);",
+        "const archive = asUnpacked(opened.archive);", "const archive = opened.archive;",
         (sample("names_with_dot_segments_inside_a_nested_zip"),),
     ),
     Mutation(

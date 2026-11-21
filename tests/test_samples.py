@@ -15,7 +15,7 @@ HOLE_BYTES = 4_300_000_000
 @pytest.mark.parametrize("sample", SAMPLES, ids=lambda sample: sample.name)
 def test_sample_findings(sample, scan, page):
     page.wordpress_org.answers.update(sample.answers())
-    report = scan(sample.build(), online=sample.online)
+    report = scan(sample.build(), name=sample.file_name, online=sample.online)
     assert finding_keys(report) == set(sample.expected)
     assert report["completed"] is sample.completed
     # A line that stands for several findings (a group of archives) carries their number.

@@ -145,29 +145,93 @@ export const scanArchive = async (file, { emit, lookup, online }) => {
   });
 };
 
-// The first bytes decide the format, not the file's name: a zip, a tar, or a tar packed with gzip.
+// The first bytes decide the format, not the file's name: a zip, a tar, a tar packed with gzip,
+// or a database dump on its own (a gzip that holds no tar). Only a plain .sql, which has no first
+// bytes of its own, is told by its name, and only once it opened as nothing else.
 const openCopy = async (fileSource, reading, alive) => {
   const file = fileSource.blob;
   const first = new Uint8Array(await file.slice(0, TAR_BLOCK_BYTES).arrayBuffer());
   fileSource.bytesRead += first.length;
   const packing = first[0] === GZIP_START[0] && first[1] === GZIP_START[1] ? 'gzip' : 'none';
   if (packing === 'gzip' || looksLikeTar(first)) {
-    const opened = await openTar(file, packing, { maxEntries: MAX_ENTRIES, alive });
+    let opened;
+    try {
+      opened = await openTar(file, packing, { maxEntries: MAX_ENTRIES, alive });
+    } catch (error) {
+      if (packing === 'gzip' && error instanceof TarFormatError && error.code === 'not_a_tar') return dumpAlone(file);
+      throw error;
+    }
     // A plain .tar is read in place through a source of its own, like a zip.
     reading.source = packing === 'gzip' ? opened.source : fileSource;
     if (packing !== 'gzip') fileSource.bytesRead += opened.source.bytesRead;
     return opened.archive;
   }
-  return openZip(file, MAX_ENTRIES);
+  try {
+    return await openZip(file, MAX_ENTRIES);
+  } catch (error) {
+    if (error instanceof ZipFormatError && error.code === 'not_a_zip' && PLAIN_DUMP_NAME.test(nameOfFile(file))) return dumpAlone(file);
+    throw error;
+  }
 };
 
 const TAR_BLOCK_BYTES = 512;
 const GZIP_START = [0x1f, 0x8b];
+const PLAIN_DUMP_NAME = /\.sql$/i;
+// The name a dump dropped by itself is shown under; a Blob without one (no File) gets this.
+const UNNAMED_DUMP = 'database';
+
+const nameOfFile = (file) => (typeof file.name === 'string' && file.name !== '' ? file.name : UNNAMED_DUMP);
+
+// The whole file as the one entry of an archive, read in place like a stored file.
+const dumpAlone = (file) => {
+  const name = nameOfFile(file);
+  return {
+    format: 'dump',
+    entries: [{
+      index: 0, name, nameBytes: new TextEncoder().encode(name), extraLength: 0, method: METHOD_STORED, crc32: null,
+      compressedSize: file.size, uncompressedSize: file.size, headerOffset: 0, isDirectory: false, isSymlink: false,
+      isEncrypted: false, hasDescriptor: false, unreadable: '',
+    }],
+    problems: [],
+    directoryStart: file.size,
+  };
+};
+
+// A dump dropped on the page by itself gets the database checks, and the file checks have
+// nothing to look at. Whether the plugins it calls active are in the copy cannot be known
+// without the copy, so that finding is left out (every active plugin would be "missing") and
+// the report says so instead.
+const scanDumpAlone = async (source, archive, reporter, { emit, alive }) => {
+  const [dump] = archive.entries;
+  emit({ type: 'opened', files: 1, folders: 0, declaredBytes: dump.uncompressedSize });
+  emit({ type: 'facts', root: '', version: '', locale: '', plugins: [], themes: [], databases: [{ path: dump.name, bytes: dump.uncompressedSize }] });
+  reporter.report('scan.dump_only', '', {});
+  const container = {
+    source,
+    archive,
+    reporter: {
+      report: (rule, path, params) => {
+        if (rule !== 'db.active_plugin_missing') reporter.report(rule, path, params);
+      },
+    },
+    progress: (update) => emit({ type: 'progress', ...update }),
+    alive,
+  };
+  const siteHosts = await checkDatabases(container, [dump], new Set());
+  emit({ type: 'loaded_code', total: 0, files: [] });
+  emit({ type: 'site_hosts', hosts: [...siteHosts].slice(0, LISTED_SITE_HOSTS) });
+  emit({ type: 'hashes', files: await hashRedFiles(container, reporter.redFiles()) });
+};
 
 const scanCopy = async (reading, reporter, options) => {
   const { emit, names } = options;
   const alive = createHeartbeat(emit);
-  const unpacked = asUnpacked(await openCopy(reading.source, reading, alive));
+  const opened = await openCopy(reading.source, reading, alive);
+  if (opened.format === 'dump') {
+    await scanDumpAlone(reading.source, opened, reporter, { emit, alive });
+    return;
+  }
+  const unpacked = asUnpacked(opened);
   const { source } = reading;
   const part = contentPartOf(unpacked);
   const isPart = part !== null;
@@ -1590,7 +1654,7 @@ const checkArchiveHead = (container, { entry, dataStart, extension }, kind) => {
   // A packed database dump is unpacked by the database check, or named by it when it lies in a
   // zip found in the copy.
   if (kind === 'gzip' && isDatabaseDump(entry.name)) return;
-  if (!isZipKind(kind)) {
+  if (!isZipKind(kind) && !TAR_KINDS.has(kind)) {
     reporter.report('archive.not_opened', entry.name, { kind, bytes, reason: 'format' });
   } else if (container.isNested) {
     reporter.report('archive.not_opened', entry.name, { kind, bytes, reason: 'depth' });
@@ -1599,7 +1663,19 @@ const checkArchiveHead = (container, { entry, dataStart, extension }, kind) => {
   }
 };
 
-// Opens the zips found inside the copy and runs the same checks on their contents. The ones
+// The archives found inside the copy that open as a tar: a tar, and a gzip that turns out to hold
+// one (a gzip that does not is named as not opened).
+const TAR_KINDS = new Set(['tar', 'gzip']);
+const TAR_NOT_OPENED = new Map([['too_many_entries', 'too_many_entries']]);
+
+// Opens a nested archive as what it starts like. Returns { source, archive }.
+const openNestedArchive = async (blob, kind, alive) => {
+  if (!TAR_KINDS.has(kind)) return { source: new ArchiveSource(blob), archive: await openZip(blob, NESTED_MAX_ENTRIES) };
+  const packing = kind === 'gzip' ? 'gzip' : 'none';
+  return openTar(blob, packing, { maxEntries: NESTED_MAX_ENTRIES, alive, limitBytes: NESTED_UNPACKED_LIMIT_BYTES });
+};
+
+// Opens the zips and tars found inside the copy and runs the same checks on their contents. The ones
 // behind a false name go first, then the smallest, because the budget can run out. A zip that
 // is byte for byte the one in an official release is not opened and costs no budget.
 const openNestedArchives = async (copy, emit, verified) => {
@@ -1688,10 +1764,12 @@ const checkNested = async (copy, candidate, { blob, deadline, progress }) => {
       copy.reporter.report(rule, path === '' ? outerName : `${outerName}${NESTED_SEPARATOR}${writtenOf.get(path) ?? path}`, params, { file: outerName })
     ),
   };
-  const source = new ArchiveSource(blob);
+  let source = null;
   const { isBehindMedia = false } = candidate;
   try {
-    const archive = asUnpacked(await openZip(blob, NESTED_MAX_ENTRIES));
+    const opened = await openNestedArchive(blob, candidate.kind, copy.alive);
+    source = opened.source;
+    const archive = asUnpacked(opened.archive);
     writtenOf = writtenNamesOf(archive.entries);
     if (isBehindMedia) {
       copy.reporter.report('layout.archive_behind_media', outerName, { extension: candidate.extension, bytes: candidate.entry.uncompressedSize });
@@ -1722,11 +1800,15 @@ const checkNested = async (copy, candidate, { blob, deadline, progress }) => {
       reportNotOpened(copy.reporter, candidate, NOT_OPENED_REASONS.get(error.code));
     } else if (error instanceof ZipFormatError) {
       copy.reporter.report(`zip.${error.code}`, outerName, error.params);
+    } else if (error instanceof TarFormatError) {
+      // A gzip holding no tar is a format this scanner does not open; a tar that cannot be listed is damaged.
+      const reason = error.code === 'not_a_tar' && candidate.kind === 'gzip' ? 'format' : TAR_NOT_OPENED.get(error.code) ?? 'damaged';
+      reportNotOpened(copy.reporter, candidate, reason);
     } else {
       throw error;
     }
   } finally {
-    copy.source.bytesRead += source.bytesRead;
+    if (source !== null) copy.source.bytesRead += source.bytesRead;
   }
 };
 

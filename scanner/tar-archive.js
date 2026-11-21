@@ -9,11 +9,12 @@
 
 import { ArchiveSource } from './entries.js';
 import { GzipSource } from './gzip-source.js';
-import { createTarIndexer } from './tar-reader.js';
+import { createTarIndexer, looksLikeTar } from './tar-reader.js';
 import { MAX_ENTRIES, METHOD_STORED, ZipFormatError, openZip } from './zip-reader.js';
 
 // A plain .tar is read whole once to find its headers; its data is not kept.
 const INDEX_PIECE_BYTES = 1024 * 1024;
+const TAR_BLOCK_BYTES = 512;
 // A .tar.gz built to unpack forever (a few MB that unpack to terabytes) is stopped here: the
 // largest honest backup we expect is a few GB, and one unpacking pass of 16 GB takes minutes.
 export const TAR_UNPACKED_LIMIT_BYTES = 16 * 1024 * 1024 * 1024;
@@ -30,16 +31,19 @@ export class TarFormatError extends Error {
   }
 }
 
-// `file` is the visitor's Blob, `packing` 'gzip' or 'none'. Returns { source, archive }.
-export const openTar = async (file, packing, { maxEntries, alive }) => {
+// `file` is the visitor's Blob (or a zip's entry found in the copy), `packing` 'gzip' or 'none'.
+// Returns { source, archive }. A gzip whose first unpacked block is no tar header throws
+// not_a_tar before the rest is unpacked: it is most often a database dump of any size.
+export const openTar = async (file, packing, { maxEntries, alive, limitBytes = TAR_UNPACKED_LIMIT_BYTES }) => {
   const tarEntries = [];
   const indexer = createTarIndexer({ onEntry: (entry) => tarEntries.push(entry), maxEntries });
   const problems = [];
   let source;
   if (packing === 'gzip') {
     source = new GzipSource(file);
-    const unpacking = await source.index((bytes) => indexer.push(bytes), { limitBytes: TAR_UNPACKED_LIMIT_BYTES, alive });
-    if (unpacking.state === 'too_large') problems.push({ code: 'gzip_too_large', path: '', params: { bytes: TAR_UNPACKED_LIMIT_BYTES } });
+    if (!looksLikeTar(await source.collect(0, TAR_BLOCK_BYTES))) throw new TarFormatError('not_a_tar');
+    const unpacking = await source.index((bytes) => indexer.push(bytes), { limitBytes, alive });
+    if (unpacking.state === 'too_large') problems.push({ code: 'gzip_too_large', path: '', params: { bytes: limitBytes } });
     if (unpacking.state === 'damaged' || unpacking.state === 'truncated') {
       problems.push({ code: 'gzip_damaged', path: '', params: { offset: unpacking.bytes } });
     }

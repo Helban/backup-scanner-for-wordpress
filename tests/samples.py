@@ -115,6 +115,9 @@ class Sample:
     # What the wordpress.org stand-in answers besides the core list of the sample site.
     answers: Callable[[], dict[str, Answer]] = field(default=dict)
     online: bool = True
+    # The name the page gets the file under. The first bytes decide the format; only a plain
+    # .sql, which has no first bytes of its own, is known by its name.
+    file_name: str = "backup.zip"
 
 
 def red(rule: str, path: str = "") -> Finding:
@@ -3078,11 +3081,92 @@ SAMPLES: list[Sample] = [
         lambda: tar_site_with(packed=True)()[:-4],
         frozenset({unchecked("tar.gzip_damaged")}),
     ),
+
+    # A database dump dropped on the page by itself (engine.js scanDumpAlone): a gzip that holds no
+    # tar, or a plain .sql. The dump's own checks run; whether its active plugins are in the copy
+    # cannot be checked without the copy, and that is said instead of a finding.
     Sample(
-        "tar_gzip_without_tar",
-        lambda: with_gzip(b"INSERT INTO `wp_options` VALUES (1,'active_plugins','a:0:{}','yes');\n" * 20),
-        frozenset({unchecked("tar.not_a_tar")}),
+        "dump_alone_packed",
+        lambda: gzip.compress(SITE_ADDRESS_SQL + DUMP_EVAL, mtime=0),
+        frozenset({red("db.eval_base64", "database.sql.gz"), unchecked("scan.dump_only")}),
+        file_name="database.sql.gz",
+    ),
+    Sample(
+        # UpdraftPlus's own file, a gzip member per table, under its own name.
+        "dump_alone_updraftplus",
+        lambda: gzip_members(UPDRAFT_DUMP_HEADER, DUMP_ROWS, DUMP_EVAL, UPDRAFT_DUMP_FOOTER),
+        frozenset({red("db.eval_base64", UPDRAFT_DUMP), unchecked("scan.dump_only")}),
+        file_name=UPDRAFT_DUMP,
+    ),
+    Sample(
+        # The content decides: the same gzip under a name that says nothing about a database.
+        "dump_alone_any_name",
+        lambda: gzip.compress(DUMP_EVAL, mtime=0),
+        frozenset({red("db.eval_base64", "export.gz"), unchecked("scan.dump_only")}),
+        file_name="export.gz",
+    ),
+    Sample(
+        "dump_alone_plain",
+        lambda: DUMP_SNIPPETS,
+        frozenset({
+            amber("db.snippet_rows", "database.sql"),
+            amber("db.snippet_plugin_active", "database.sql"),
+            unchecked("scan.dump_only"),
+        }),
+        file_name="database.sql",
+    ),
+    Sample(
+        "dump_alone_cut",
+        lambda: gzip.compress(DUMP_EVAL + DUMP_ROWS, mtime=0)[:-DUMP_CUT_BYTES],
+        frozenset({red("db.eval_base64", "database.sql.gz"), unchecked("entry.corrupt_data", "database.sql.gz"), unchecked("scan.dump_only")}),
+        file_name="database.sql.gz",
+    ),
+    Sample(
+        # Text that is neither an archive nor named .sql is still no archive.
+        "plain_text_alone",
+        lambda: b"just some notes\n",
+        frozenset({unchecked("zip.not_a_zip")}),
         completed=False,
+        file_name="notes.txt",
+    ),
+
+    # A tar or a .tar.gz found in the copy is opened one level deep, like a zip.
+    Sample(
+        "nested_tar",
+        site_with(Member(UPLOADS + "old-site.tar", craft_tar([TarMember("setup.exe", PROGRAM)]))),
+        frozenset({amber("layout.executable_in_archive", UPLOADS + "old-site.tar" + NESTED + "setup.exe")}),
+    ),
+    Sample(
+        "nested_tar_gz",
+        site_with(Member(UPLOADS + "old-site.tar.gz", with_gzip(craft_tar([TarMember("setup.exe", PROGRAM)])), method=STORED)),
+        frozenset({amber("layout.executable_in_archive", UPLOADS + "old-site.tar.gz" + NESTED + "setup.exe")}),
+    ),
+    Sample(
+        # Its own tar findings are named on it, the files behind a damaged header checked too.
+        "nested_tar_damaged_header",
+        site_with(Member(UPLOADS + "old.tar", craft_tar([
+            TarMember("broken.jpeg", JPEG, checksum_shift=1), TarMember("hidden.jpeg", PROGRAM),
+        ]))),
+        frozenset({
+            red("tar.damaged_header", UPLOADS + "old.tar"),
+            red("layout.disguised_executable", UPLOADS + "old.tar" + NESTED + "hidden.jpeg"),
+        }),
+    ),
+    Sample(
+        # Inside the copy a .tar.gz unpacks no further than a nested zip may (64 MB), not 16 GB.
+        "nested_tar_gz_past_limit",
+        # Built when the sample runs, not when this module loads: 65 MB of zeros.
+        lambda: site_with(Member(UPLOADS + "bomb.tar.gz", with_gzip(craft_tar([TarMember("zeros.bin", b"\x00" * NESTED_PAST_LIMIT_BYTES)])), method=STORED))(),
+        frozenset({
+            unchecked("tar.gzip_too_large", UPLOADS + "bomb.tar.gz"),
+            unchecked("zip.entry_unreadable", UPLOADS + "bomb.tar.gz" + NESTED + "zeros.bin"),
+        }),
+    ),
+    Sample(
+        # A gzip in the copy that holds no tar and is no dump stays unopened.
+        "nested_gzip_without_tar",
+        site_with(Member(UPLOADS + "styles.css.gz", gzip.compress(b"body { color: black; }\n" * 50, mtime=0))),
+        frozenset({unchecked("archive.not_opened", UPLOADS + "styles.css.gz")}),
     ),
 ]
 

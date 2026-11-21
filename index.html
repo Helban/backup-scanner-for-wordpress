@@ -14,15 +14,15 @@
      in its own layout. -->
 <main class="scanner" data-scanner="root">
   <h1>Backup Scanner for WordPress</h1>
-  <p class="lede">Checks a WordPress backup (zip, tar or tar.gz) before you run it on your computer. The file is read in this browser tab and is not uploaded anywhere.</p>
+  <p class="lede">Checks a WordPress backup (zip, tar or tar.gz, or a database dump on its own) before you run it on your computer. The file is read in this browser tab and is not uploaded anywhere.</p>
 
   <p class="notice" data-scanner="unsupported" hidden>This browser cannot unpack zip data on its own. Open the page in a current Chrome, Edge, Firefox or Safari.</p>
   <noscript><p class="notice">The scanner runs in your browser and needs JavaScript.</p></noscript>
 
   <label class="drop" data-scanner="drop">
     <span class="drop-title">Drop a backup here</span>
-    <span class="drop-hint">or choose a file: zip, tar or tar.gz</span>
-    <input type="file" accept=".zip,.tar,.tgz,.gz,application/zip,application/x-tar,application/gzip" data-scanner="input">
+    <span class="drop-hint">or choose a file: zip, tar, tar.gz, sql or sql.gz</span>
+    <input type="file" accept=".zip,.tar,.tgz,.gz,.sql,application/zip,application/x-tar,application/gzip" data-scanner="input">
   </label>
   <button type="button" class="example" data-scanner="example">Show me on an example</button>
 

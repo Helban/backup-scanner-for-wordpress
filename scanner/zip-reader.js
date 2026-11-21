@@ -408,7 +408,7 @@ const STRICT_UTF8 = new TextDecoder('utf-8', { fatal: true });
 
 // Names that are not valid UTF-8 are mapped one byte to one character, so two different byte
 // strings never collapse into the same invalid-character placeholder.
-const decodeName = (bytes) => {
+export const decodeName = (bytes) => {
   try {
     return STRICT_UTF8.decode(bytes);
   } catch (error) {

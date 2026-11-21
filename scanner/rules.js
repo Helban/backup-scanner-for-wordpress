@@ -166,6 +166,8 @@ export const RULES = new Map([
   // Tar programs read the records in front of a file differently (tar-reader.js otherNames).
   ['tar.read_differently', 'red'],
   ['tar.size_read_differently', 'red'],
+  // Outside the one form every tar program reads alike (tar-form.js).
+  ['tar.unusual_form', 'red'],
   ['tar.data_after_end', 'amber'],
 
   ['entry.corrupt_data', 'not_checked'],

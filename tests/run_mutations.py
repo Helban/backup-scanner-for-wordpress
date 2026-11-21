@@ -1030,7 +1030,7 @@ def unpacked(label: str) -> str:
 LIMIT_TEST = "test_database.py::test_a_packed_dump_is_unpacked_only_to_the_limit"
 PACKED_DUMP_MUTATIONS: list[Mutation] = [
     Mutation(
-        "gzip members after the first not read", GUNZIP, "    members += 1;\n    state = HEADER;", "    members += 1;\n    state = PADDING;",
+        "gzip members after the first not read", GUNZIP, "    members += 1;\n    state = HEADER;", "    members += 1;\n    fail('damaged');",
         (sample("database_packed_in_members"), unpacked("four members")),
     ),
     Mutation("gzip checksum not compared", GUNZIP, "if (crc !== memberCrc || size", "if (size", (unpacked("wrong checksum"),)),
@@ -1123,8 +1123,48 @@ TAR_MUTATIONS: list[Mutation] = [
     ),
     Mutation(
         "a tar listing nothing read as an empty archive", TAR_ARCHIVE,
-        "  if (tarEntries.length === 0 && listing.state !== 'ended') throw new TarFormatError('not_a_tar');\n", "",
+        "  if (tarEntries.length === 0 && listing.state !== 'ended' && isDump) throw new TarFormatError('not_a_tar');\n", "",
         (sample("archive_signature[tar]"),),
+    ),
+    # The canonical form (tar-form.js, 2026-11-21): each part of it switched off must fail a sample.
+    Mutation(
+        "unusual tar form not said", TAR_ARCHIVE, "  if (listing.unusual !== null) {\n    problems.push({ code: 'unusual_form'",
+        "  if (false) {\n    problems.push({ code: 'unusual_form'", (sample("tar_gz_size_with_tab"), sample("tar_file_through_symlink")),
+    ),
+    Mutation(
+        "a block only another program reads as a header passed over", TAR_READER,
+        "      if (mightBeHeader(header)) noteUnusual('header_read_differently', headerOffset);\n", "", (sample("tar_gz_size_with_tab"),),
+    ),
+    Mutation(
+        "a tar with an unreadable header read as a dump", TAR_ARCHIVE, "const isDump = listing.unusual === null || startsLikeDump(start);",
+        "const isDump = true;", (sample("tar_gz_size_with_tab_no_end"),),
+    ),
+    Mutation("header form not judged", TAR_READER, "    if (form !== '') noteUnusual(form, headerOffset);\n", "", (sample("tar_mode_with_tab"), sample("tar_pax_solaris_name"))),
+    Mutation("entry form not judged", TAR_READER, "    if (entryIssue !== '') noteUnusual(entryIssue, headerOffset);\n", "", (sample("tar_file_named_as_folder"), sample("tar_hard_links"))),
+    Mutation(
+        "pax records not judged", TAR_READER, "    if (issue !== '') noteUnusual(issue, meta.headerOffset);\n", "",
+        (sample("tar_pax_bom_key"), sample("tar_pax_empty_path")),
+    ),
+    Mutation(
+        "records in front of a file not judged", TAR_READER, "      if (isRepeated || isMixed) noteUnusual('records', headerOffset);\n", "",
+        (sample("tar_two_pax_headers"),),
+    ),
+    Mutation("a file through a symlink passes", TAR_READER, "    return passesLink ? 'through_link' : '';", "    return '';", (sample("tar_file_through_symlink"),)),
+    Mutation(
+        "damage among entries not unusual", TAR_READER, "      if (entries > 0 && damagedAt >= 0 && (unusual === null || damagedAt < unusual.offset)) {",
+        "      if (false) {", (sample("tar_damaged_header"),),
+    ),
+    Mutation(
+        "a pax size equal to the header's read differently", TAR_READER, "    if (next.size !== null && next.size !== sizeField) anomalies.push('size_read_differently');",
+        "    if (next.size !== null) anomalies.push('size_read_differently');", (sample("tar_pax_size_equal"),),
+    ),
+    Mutation(
+        "a gzip member after zeros not read", GUNZIP, "      if (input[at] !== 0) {\n        state = HEADER;\n        return true;",
+        "      if (input[at] !== 0) {\n        fail('damaged');\n        return true;", (sample("tar_gz_member_after_zeros"),),
+    ),
+    Mutation(
+        "reserved gzip flags refused", GUNZIP, "    const flags = input[at + 3];\n",
+        "    const flags = input[at + 3];\n    if (flags & 0xe0) {\n      fail('damaged');\n      return true;\n    }\n", (sample("tar_gz_reserved_flags"),),
     ),
     # The pax findings of the Fable review, 2026-11-21.
     Mutation(
@@ -1186,8 +1226,12 @@ TAR_MUTATIONS: list[Mutation] = [
     # Stage 3: a dump dropped by itself, and tars inside the copy.
     Mutation(
         "dump dropped alone not read", ENGINE,
-        "      if (packing === 'gzip' && error instanceof TarFormatError && error.code === 'not_a_tar') return dumpAlone(file);\n", "",
+        "      if (mayBeDump && error instanceof TarFormatError && error.code === 'not_a_tar') return dumpAlone(file);\n", "",
         (sample("dump_alone_packed"), sample("dump_alone_any_name")),
+    ),
+    Mutation(
+        "a gzip named as a tar read as a dump", ENGINE, "const mayBeDump = packing === 'gzip' ? !TAR_NAME.test(name) : PLAIN_DUMP_NAME.test(name);",
+        "const mayBeDump = packing === 'gzip' || PLAIN_DUMP_NAME.test(name);", (sample("tar_named_dump"),),
     ),
     Mutation(
         "plain .sql dropped alone not read", ENGINE, "&& PLAIN_DUMP_NAME.test(nameOfFile(file))) return dumpAlone(file);",

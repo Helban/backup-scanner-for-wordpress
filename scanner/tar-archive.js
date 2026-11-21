@@ -44,23 +44,35 @@ export const openTar = async (file, packing, { maxEntries, alive, limitBytes = T
   const problems = [];
   let source;
   let unpackedBytes = -1;
+  let start = new Uint8Array(0);
+  const listInto = (bytes) => {
+    if (start.length < START_BYTES) start = joined(start, bytes.subarray(0, START_BYTES - start.length));
+    indexer.push(bytes);
+  };
   if (packing === 'gzip') {
     source = new GzipSource(file);
-    const unpacking = await source.index((bytes) => indexer.push(bytes), { limitBytes, alive });
+    const unpacking = await source.index(listInto, { limitBytes, alive });
     unpackedBytes = unpacking.bytes;
     if (unpacking.state === 'too_large') problems.push({ code: 'gzip_too_large', path: '', params: { bytes: limitBytes } });
     if (unpacking.state === 'damaged' || unpacking.state === 'truncated') {
       problems.push({ code: 'gzip_damaged', path: '', params: { offset: unpacking.bytes } });
     }
   } else {
-    source = await indexInPlace(file, indexer, alive);
+    source = await indexInPlace(file, listInto, alive);
   }
   const listing = indexer.finish();
   if (listing.state === 'too_many') throw new TarFormatError('too_many_entries', { entries: maxEntries });
   if (tarEntries.length === 0 && unpackedBytes === 0) throw new TarFormatError('gzip_damaged', { offset: 0 });
-  if (tarEntries.length === 0 && listing.state !== 'ended') throw new TarFormatError('not_a_tar');
+  // No entry: a dump, unless some block of it is one a tar program takes for a header. A dump
+  // starts as SQL text, which decides for it: a block of rows that happens to add up like a
+  // header is then no reason to call it a tar (engine.js keeps a file named .tar from that way).
+  const isDump = listing.unusual === null || startsLikeDump(start);
+  if (tarEntries.length === 0 && listing.state !== 'ended' && isDump) throw new TarFormatError('not_a_tar');
   // What the gzip layer already explains is not said a second time.
   const isUnpackingCut = problems.length > 0;
+  if (listing.unusual !== null) {
+    problems.push({ code: 'unusual_form', path: '', params: { offset: listing.unusual.offset, reason: listing.unusual.reason } });
+  }
   if (listing.state === 'damaged') problems.push({ code: 'damaged', path: '', params: { entries: tarEntries.length } });
   if (!isUnpackingCut && listing.state === 'truncated') problems.push({ code: 'truncated', path: '', params: {} });
   if (!isUnpackingCut && listing.state === 'no_end') problems.push({ code: 'no_end', path: '', params: {} });
@@ -101,15 +113,30 @@ const zipSideOf = async (file, packing, tarEntries) => {
 
 // Ceiling: the whole .tar is read to find its headers, 1-2 s per GB from a local disk. Reading
 // only the headers (a slice per header, skipping the data) is the upgrade if that ever matters.
-const indexInPlace = async (file, indexer, alive) => {
+const indexInPlace = async (file, listInto, alive) => {
   const source = new ArchiveSource(file);
   for (let at = 0; at < file.size; at += INDEX_PIECE_BYTES) {
     const piece = new Uint8Array(await file.slice(at, at + INDEX_PIECE_BYTES).arrayBuffer());
     source.bytesRead += piece.length;
-    indexer.push(piece);
+    listInto(piece);
     alive();
   }
   return source;
+};
+
+const START_BYTES = 512;
+// How the dumps of mysqldump, MariaDB, phpMyAdmin, Adminer, UpdraftPlus, Duplicator, BackWPup and
+// WP Migrate DB start: a comment, or a statement. NUL never stands in a dump's text.
+const DUMP_START = /^(--|#|\/\*|(set|create|drop|insert|use|lock|start|begin|replace|alter)\b)/i;
+
+// The decoder drops a byte order mark.
+const startsLikeDump = (bytes) => !bytes.includes(0) && DUMP_START.test(new TextDecoder('utf-8').decode(bytes).trimStart());
+
+const joined = (first, second) => {
+  const both = new Uint8Array(first.length + second.length);
+  both.set(first);
+  both.set(second, first.length);
+  return both;
 };
 
 // Tar entries in the shape of stored zip entries (see the top of the file). A hard link takes the

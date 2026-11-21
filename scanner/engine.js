@@ -158,7 +158,11 @@ const openCopy = async (fileSource, reading, alive) => {
     try {
       opened = await openTar(file, packing, { maxEntries: MAX_ENTRIES, alive });
     } catch (error) {
-      if (packing === 'gzip' && error instanceof TarFormatError && error.code === 'not_a_tar') return dumpAlone(file);
+      // A file named as a tar is unpacked with tar, so it never goes the dump's way: its first
+      // block can be SQL text and a header at once.
+      const name = nameOfFile(file);
+      const mayBeDump = packing === 'gzip' ? !TAR_NAME.test(name) : PLAIN_DUMP_NAME.test(name);
+      if (mayBeDump && error instanceof TarFormatError && error.code === 'not_a_tar') return dumpAlone(file);
       throw error;
     }
     // A plain .tar is read in place through a source of its own, like a zip.
@@ -177,6 +181,7 @@ const openCopy = async (fileSource, reading, alive) => {
 const TAR_BLOCK_BYTES = 512;
 const GZIP_START = [0x1f, 0x8b];
 const PLAIN_DUMP_NAME = /\.sql$/i;
+const TAR_NAME = /\.(tar|tar\.gz|tgz)$/i;
 // The name a dump dropped by itself is shown under; a Blob without one (no File) gets this.
 const UNNAMED_DUMP = 'database';
 

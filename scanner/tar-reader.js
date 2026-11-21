@@ -13,6 +13,7 @@
 // type is a regular file. Where the format leaves room to show one thing to a lister and another
 // to an extractor, the entry or the archive carries an anomaly instead of a guess.
 
+import { byteString, headerFormIssue, longNameIssue, mightBeHeader, nameKey, pathIssue, readCanonicalPax } from './tar-form.js';
 import { decodeName } from './zip-reader.js';
 
 const BLOCK_BYTES = 512;
@@ -69,7 +70,7 @@ const TYPES_WITHOUT_DATA = new Set([TYPE_HARD_LINK, TYPE_SYMLINK, TYPE_DIRECTORY
 //     otherNames - names other tar programs write the same data under, where they read the
 //                  records in front of the header differently (anomaly 'read_differently');
 //                  'size_read_differently' when they read a different length of data
-//   finish() -> { state, entries, endOffset, damagedAt, anomalies }, state one of
+//   finish() -> { state, entries, endOffset, damagedAt, anomalies, unusual }, state one of
 //     ended     - the end marker was found (bytes after it that are not zero: anomaly 'data_after_end')
 //     no_end    - the data stopped at a header boundary without the end marker
 //     truncated - it stopped inside a header or a file's data
@@ -81,6 +82,9 @@ const TYPES_WITHOUT_DATA = new Set([TYPE_HARD_LINK, TYPE_SYMLINK, TYPE_DIRECTORY
 //   block that is one. A pax header whose records do not add up, or a pax size that is not a
 //   decimal number, is ignored the way GNU tar, bsdtar and busybox ignore it (anomaly
 //   'malformed_pax'; Python's tarfile refuses such an archive).
+//   `unusual` is null for an archive written wholly in the canonical form of tar-form.js, else
+//   { reason, offset } of the first place that is not: there the readings above are a best
+//   effort, and the archive is reported for it (tar.unusual_form).
 export const createTarIndexer = ({ onEntry, maxEntries }) => {
   let pending = new Uint8Array(0);
   let offset = 0;
@@ -100,6 +104,16 @@ export const createTarIndexer = ({ onEntry, maxEntries }) => {
   let globalIrregular = false;
   let globalSizeDiffers = false;
   let meta = null;
+  let unusual = null;
+  // Names listed so far (tar-form.js nameKey -> whether every entry of it was a folder), and the
+  // exact names of regular files, which are all a canonical hard link may point to.
+  const seenNames = new Map();
+  const fileNames = new Set();
+  const symlinkNames = createFolderSet();
+
+  const noteUnusual = (reason, at) => {
+    if (unusual === null) unusual = { reason, offset: at };
+  };
 
   const stop = (reason) => {
     outcome = reason;
@@ -121,9 +135,11 @@ export const createTarIndexer = ({ onEntry, maxEntries }) => {
       // The first zero block ends the archive for GNU tar and Python; a second one is the
       // proper end. A header after a lone zero block is not extracted, so it is no entry.
       endOffset = headerOffset;
+      if (hasOverride(next) || next.hasLongLink) noteUnusual('records_without_file', headerOffset);
       state = 'after_end';
       return true;
     }
+    const form = headerFormIssue(header);
     // GNU tar 1.35 and bsdtar (the tar.exe of Windows) skip block by block to the next header
     // that adds up and unpack what follows; Python's tarfile and busybox stop (measured
     // 2026-11-21, tools/wp-zip-scan/tar-stage2/probe_damaged_header.py). Listing on as the first
@@ -131,19 +147,29 @@ export const createTarIndexer = ({ onEntry, maxEntries }) => {
     // tar does ("Skipping to next header"), and busybox wrote the file behind such a header.
     const sizeField = hasValidChecksum(header) ? readNumber(header.subarray(SIZE_AT, SIZE_AT + SIZE_BYTES)) : null;
     if (sizeField === null) {
+      // A block no tar program takes for a header is damage, or a dump that is no tar at all.
+      if (mightBeHeader(header)) noteUnusual('header_read_differently', headerOffset);
       if (damagedAt < 0) damagedAt = headerOffset;
       archiveAnomalies.add('damaged_header');
       // GNU tar forgets a long name or pax record waiting for its header; the others keep it.
       if (hasOverride(next)) next.irregular = true;
       return true;
     }
+    if (form !== '') noteUnusual(form, headerOffset);
     const type = header[TYPE_AT];
     if (type === TYPE_GNU_LONG_NAME || type === TYPE_GNU_LONG_LINK || LOCAL_PAX_TYPES.has(type) || type === TYPE_PAX_GLOBAL) {
       if (sizeField > META_LIMIT_BYTES) {
+        noteUnusual('records_too_large', headerOffset);
         stop('damaged');
         return true;
       }
-      meta = { type, size: sizeField, padded: padded(sizeField) };
+      // Canonical: one pax header, or a long name and a long link, in front of one file; a
+      // global header only between files.
+      const hasRecords = next.paxHeaders > 0 || next.longName !== null || next.hasLongLink;
+      const isRepeated = (type === TYPE_GNU_LONG_NAME && next.longName !== null) || (type === TYPE_GNU_LONG_LINK && next.hasLongLink);
+      const isMixed = (LOCAL_PAX_TYPES.has(type) || type === TYPE_PAX_GLOBAL) ? hasRecords : next.paxHeaders > 0;
+      if (isRepeated || isMixed) noteUnusual('records', headerOffset);
+      meta = { type, size: sizeField, padded: padded(sizeField), headerOffset };
       state = 'meta';
       return true;
     }
@@ -162,6 +188,7 @@ export const createTarIndexer = ({ onEntry, maxEntries }) => {
 
   const describe = (header, { headerOffset, sizeField, type: writtenType }) => {
     let type = writtenType;
+    let isV7Folder = false;
     const anomalies = [];
     const isPosix = startsWith(header, MAGIC_AT, POSIX_MAGIC);
     let ownName = fieldBytes(header, NAME_AT, NAME_BYTES);
@@ -183,6 +210,8 @@ export const createTarIndexer = ({ onEntry, maxEntries }) => {
     const endsInSlash = nameBytes.length > 0 && nameBytes[nameBytes.length - 1] === SLASH;
     if (endsInSlash && (type === TYPE_OLD_FILE || type === TYPE_FILE)) {
       if (type === TYPE_FILE) anomalies.push('file_named_as_folder');
+      // v7's folder, read so by every program; the new file type with a slash is not.
+      if (type === TYPE_OLD_FILE) isV7Folder = true;
       type = TYPE_DIRECTORY;
     }
     // A copy: the name is a view into the piece of input the header came in, and an entry that
@@ -192,8 +221,17 @@ export const createTarIndexer = ({ onEntry, maxEntries }) => {
     const globalLink = globalPax.has('linkpath') ? ENCODER.encode(globalPax.get('linkpath')) : null;
     const linkBytes = next.linkName ?? globalLink ?? fieldBytes(header, LINK_AT, NAME_BYTES);
     const size = next.size ?? sizeField;
+    // busybox ignores a pax size: where it differs from the header's, programs read different
+    // lengths. node-tar writes an equal one on every header, which is read alike.
+    if (next.size !== null && next.size !== sizeField) anomalies.push('size_read_differently');
     const hasNoData = TYPES_WITHOUT_DATA.has(type);
     if (hasNoData && size > 0) anomalies.push('size_without_data');
+    const linkField = fieldBytes(header, LINK_AT, NAME_BYTES);
+    const entryIssue = canonicalEntryIssue({
+      nameBytes, linkBytes, writtenType, isDirectory: writtenType === TYPE_DIRECTORY || isV7Folder,
+      hasData: !hasNoData, sizeField, size, hasOwnLink: linkField.length > 0 || next.linkName !== null,
+    });
+    if (entryIssue !== '') noteUnusual(entryIssue, headerOffset);
     const isSparse = next.sparse || type === TYPE_GNU_SPARSE;
     const storedBytes = hasNoData ? 0 : size;
     // A sparse file's stored data is not its contents; its size as extracted is kept apart.
@@ -214,10 +252,39 @@ export const createTarIndexer = ({ onEntry, maxEntries }) => {
     };
   };
 
+  // The entry against tar-form.js's form and against the entries before it: a name each program
+  // writes alike, no data on a link or folder, a pax size equal to the header's, a link name on
+  // links only, a hard link to a regular file listed before it, and no name twice (folders
+  // aside), so that which copy of a name ends up on disk never depends on the program.
+  const canonicalEntryIssue = ({ nameBytes, linkBytes, writtenType, isDirectory, hasData, sizeField, size, hasOwnLink }) => {
+    const key = nameKey(nameBytes);
+    const wasFolder = seenNames.get(key);
+    seenNames.set(key, isDirectory && wasFolder !== false);
+    // A file under the name of an earlier symbolic link lands wherever that link points: tarfile
+    // and busybox follow it (the third review's l18).
+    const passesLink = symlinkNames.passedBy(key);
+    if (writtenType === TYPE_SYMLINK) symlinkNames.add(key);
+    const isFile = !isDirectory && (writtenType === TYPE_FILE || writtenType === TYPE_OLD_FILE);
+    const linkTarget = byteString(linkBytes);
+    if (isFile) fileNames.add(byteString(nameBytes));
+    const pathProblem = pathIssue(nameBytes, { isDirectory });
+    if (pathProblem !== '') return pathProblem;
+    if ((!hasData && sizeField !== 0) || size !== sizeField) return 'size';
+    const isLink = writtenType === TYPE_HARD_LINK || writtenType === TYPE_SYMLINK;
+    if (isLink ? linkBytes.length === 0 || linkBytes.includes(0) : hasOwnLink) return 'link';
+    if (writtenType === TYPE_HARD_LINK && !fileNames.has(linkTarget)) return 'link';
+    if (wasFolder !== undefined && !(wasFolder && isDirectory)) return 'duplicate_name';
+    return passesLink ? 'through_link' : '';
+  };
+
   const readMeta = () => {
     if (pending.length < meta.padded) return false;
     const content = take(meta.padded).subarray(0, meta.size);
+    const isLong = meta.type === TYPE_GNU_LONG_NAME || meta.type === TYPE_GNU_LONG_LINK;
+    const issue = isLong ? longNameIssue(content) : readCanonicalPax(content, { isGlobal: meta.type === TYPE_PAX_GLOBAL }).issue;
+    if (issue !== '') noteUnusual(issue, meta.headerOffset);
     if (meta.type === TYPE_GNU_LONG_NAME) readLongName(fieldBytes(content, 0, content.length).slice());
+    if (meta.type === TYPE_GNU_LONG_LINK) next.hasLongLink = true;
     if (meta.type === TYPE_GNU_LONG_LINK && !next.hasPaxLink) next.linkName = fieldBytes(content, 0, content.length).slice();
     if (LOCAL_PAX_TYPES.has(meta.type)) readLocalPax(readPaxHeader(content));
     if (meta.type === TYPE_PAX_GLOBAL) readGlobalPax(readPaxHeader(content));
@@ -288,15 +355,13 @@ export const createTarIndexer = ({ onEntry, maxEntries }) => {
     }
     if (records.has('size')) {
       // GNU tar ignores a size that is not decimal ("invalid size=0x10") and busybox ignores
-      // every pax size. An honest writer uses one only when the header's 11 octal digits cannot
-      // hold the size (8 GiB and more), so a smaller one is read differently.
+      // every pax size; describe() compares a decimal one with the header's.
       const size = decimalOrNull(records.get('size'));
       if (size === null) {
         archiveAnomalies.add('malformed_pax');
         next.sizeDiffers = true;
       } else {
         next.size = size;
-        if (size <= LARGEST_OCTAL_SIZE) next.sizeDiffers = true;
       }
     }
     if ([...records.keys()].some((key) => key.startsWith('GNU.sparse.'))) next.sparse = true;
@@ -374,15 +439,27 @@ export const createTarIndexer = ({ onEntry, maxEntries }) => {
           outcome = 'truncated';
         }
       }
-      return { state: outcome, entries: Math.min(entries, maxEntries), endOffset, damagedAt, anomalies: [...archiveAnomalies] };
+      if (outcome !== 'ended' && (hasOverride(next) || next.hasLongLink)) noteUnusual('records_without_file', offset);
+      // Damage among entries: GNU tar and bsdtar read on behind it, and what they find there
+      // depends on how each reads the damaged block. Damage with no entry at all is no tar (a
+      // dump, engine.js), which is why it is noted only here.
+      if (entries > 0 && damagedAt >= 0 && (unusual === null || damagedAt < unusual.offset)) {
+        unusual = { reason: 'damaged_header', offset: damagedAt };
+      }
+      // Past a lone zero block busybox unpacks on and the rest stop (tar.data_after_lone_end).
+      if (archiveAnomalies.has('lone_zero_block') && archiveAnomalies.has('data_after_end')) noteUnusual('lone_end', endOffset);
+      return {
+        state: outcome, entries: Math.min(entries, maxEntries), endOffset, damagedAt, anomalies: [...archiveAnomalies], unusual,
+      };
     },
   };
 };
 
 // The first block of a file is a tar header: POSIX or GNU magic, or (v7, which has none) a
-// checksum that adds up.
+// checksum that adds up as this scanner or any tar program reads it.
 export const looksLikeTar = (firstBlock) => (
-  firstBlock.length >= BLOCK_BYTES && (startsWith(firstBlock, MAGIC_AT, POSIX_MAGIC.slice(0, 5)) || hasValidChecksum(firstBlock))
+  firstBlock.length >= BLOCK_BYTES
+  && (startsWith(firstBlock, MAGIC_AT, POSIX_MAGIC.slice(0, 5)) || hasValidChecksum(firstBlock) || mightBeHeader(firstBlock))
 );
 
 // What the records in front of a header have said about it so far. `otherNames` are names some
@@ -390,14 +467,44 @@ export const looksLikeTar = (firstBlock) => (
 // differently; `sizeDiffers` that they read a different length of data.
 const nothingNext = () => ({
   name: null, longName: null, linkName: null, size: null, realSize: null, sparse: false, hasPaxPath: false, hasPaxLink: false,
-  paxHeaders: 0, otherNames: [], irregular: false, sizeDiffers: false,
+  hasLongLink: false, paxHeaders: 0, otherNames: [], irregular: false, sizeDiffers: false,
 });
+
+// Names, and whether one of them is a folder a given name lies in ("a/b" for "a/b/c"). A hash of
+// each prefix, grown character by character, keeps that one pass over the name: looking up every
+// prefix as a string costs its length each time, depth times length for a deep name.
+const createFolderSet = () => {
+  const byHash = new Map();
+  return {
+    add(key) {
+      const hash = hashOf(key);
+      if (!byHash.has(hash)) byHash.set(hash, []);
+      byHash.get(hash).push(key);
+    },
+    passedBy(key) {
+      if (byHash.size === 0) return false;
+      let hash = 0;
+      for (let at = 0; at < key.length; at += 1) {
+        const candidates = key.charCodeAt(at) === SLASH && at > 0 ? byHash.get(hash) : undefined;
+        if (candidates !== undefined && candidates.some((folder) => folder.length === at && key.startsWith(folder))) return true;
+        hash = (Math.imul(hash, PREFIX_HASH_BASE) + key.charCodeAt(at)) | 0;
+      }
+      return false;
+    },
+  };
+};
+
+const PREFIX_HASH_BASE = 0x01000193;
+
+const hashOf = (key) => {
+  let hash = 0;
+  for (let at = 0; at < key.length; at += 1) hash = (Math.imul(hash, PREFIX_HASH_BASE) + key.charCodeAt(at)) | 0;
+  return hash;
+};
 
 const hasOverride = (next) => next.name !== null || next.linkName !== null || next.size !== null || next.paxHeaders > 0;
 
 const ENCODER = new TextEncoder();
-// The largest size 11 octal digits hold: an honest writer needs a pax size only above it.
-const LARGEST_OCTAL_SIZE = 0o77777777777;
 
 // A name as GNU tar, bsdtar and busybox write it: cut at the first NUL. null when nothing is left.
 const usablePath = (value) => {

@@ -581,6 +581,9 @@ const FINDING_TEXT = new Map([
   ['tar.size_read_differently', () => (
     'Programy rozpakowujące archiwa tar czytają dla tego pliku różną długość danych, więc za nim część z nich może znaleźć pliki, których skaner nie wypisał. Tych plików skaner nie sprawdził.'
   )],
+  ['tar.unusual_form', (params) => (
+    `Od bajtu ${formatCount(params.get('offset') ?? 0)} to archiwum tar jest zapisane w formie, której programy rozpakowujące nie czytają jednakowo. Po rozpakowaniu mogą się w nim znaleźć pliki, których nie ma na tej liście, albo inna treść pod ich nazwami.`
+  )],
   ['tar.too_many_entries', (params) => (
     `Archiwum ma ponad ${formatCount(params.get('entries') ?? 0)} ${plural(params.get('entries') ?? 0, { one: 'pozycję', few: 'pozycje', many: 'pozycji' })}, więcej, niż ten skaner przyjmuje. Nic nie zostało sprawdzone.`
   )],

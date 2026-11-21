@@ -586,6 +586,9 @@ const FINDING_TEXT = new Map([
   ['tar.size_read_differently', () => (
     'Tar programs read a different length of data for this file, so after it some of them may find files the scanner did not list. Those files were not checked.'
   )],
+  ['tar.unusual_form', (params) => (
+    `From byte ${formatCount(params.get('offset') ?? 0)} on, this tar is written in a form that tar programs do not all read the same way. Unpacked, it may hold files that are not on this list, or other contents under their names.`
+  )],
   ['tar.too_many_entries', (params) => (
     `The archive holds more than ${withNoun(params.get('entries') ?? 0, 'entry', 'entries')}, more than this scanner takes. Nothing was checked.`
   )],

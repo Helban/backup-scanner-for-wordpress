@@ -119,7 +119,8 @@ class Sample:
     answers: Callable[[], dict[str, Answer]] = field(default=dict)
     online: bool = True
     # The name the page gets the file under. The first bytes decide the format; only a plain
-    # .sql, which has no first bytes of its own, is known by its name.
+    # .sql, which has no first bytes of its own, is known by its name, and a name ending in .tar,
+    # .tar.gz or .tgz keeps a gzip from reading as a dump.
     file_name: str = "backup.zip"
 
 
@@ -878,6 +879,21 @@ def hidden_mu_findings() -> frozenset[Finding]:
 
 def pax_header(records: bytes, type_flag: bytes = PAX) -> TarMember:
     return TarMember("PaxHeader/entry", records, type_flag=type_flag)
+
+
+def patched_record(member: TarMember, at: int, field: bytes) -> bytes:
+    """The member's header with `field` written at `at` and the checksum made right again."""
+    block = bytearray(record(member))
+    block[at:at + len(field)] = field
+    block[148:156] = b" " * 8
+    block[148:156] = f"{sum(block[:BLOCK]):06o}\x00 ".encode()
+    return bytes(block)
+
+
+def with_reserved_flags(packed: bytes) -> bytes:
+    """A gzip member with the three reserved flag bits set (RFC 1952: a reader must refuse it)."""
+    reserved_flags = 0xE0
+    return packed[:3] + bytes([packed[3] | reserved_flags]) + packed[4:]
 
 
 def gzip_with_name(data: bytes, name: bytes) -> bytes:
@@ -3035,6 +3051,7 @@ SAMPLES: list[Sample] = [
             TarMember(UPLOADS + "lost.jpeg", type_flag=HARD_LINK, link=ROOT + "data/missing"),
         ),
         frozenset({
+            red("tar.unusual_form"),
             red("layout.disguised_executable", ROOT + "data/blob"),
             red("layout.disguised_executable", UPLOADS + "photo-copy.jpeg"),
             unchecked("zip.entry_unreadable", UPLOADS + "lost.jpeg"),
@@ -3054,19 +3071,19 @@ SAMPLES: list[Sample] = [
             TarMember(TAR_HIDDEN_PROGRAM, PROGRAM),
             packed=True,
         ),
-        frozenset({red("tar.damaged_header"), red("layout.disguised_executable", TAR_HIDDEN_PROGRAM)}),
+        frozenset({red("tar.unusual_form"), red("tar.damaged_header"), red("layout.disguised_executable", TAR_HIDDEN_PROGRAM)}),
     ),
     Sample(
         # busybox tar reads past a single zero block; GNU tar, bsdtar and Python stop there.
         "tar_data_after_lone_end",
         tar_site_with(end=b"\x00" * BLOCK + craft_tar([TarMember(UPLOADS + "after.jpeg", PROGRAM)])),
-        frozenset({red("tar.data_after_lone_end")}),
+        frozenset({red("tar.unusual_form"), red("tar.data_after_lone_end")}),
     ),
     Sample("tar_data_after_end", tar_site_with(end=END_MARKER + b"text after the end"), frozenset({amber("tar.data_after_end")})),
     Sample(
         "tar_size_without_data",
         tar_site_with(TarMember(UPLOADS + "link.jpg", type_flag=SYMLINK, link="photo.jpeg", size_field=f"{BLOCK:011o}\x00".encode())),
-        frozenset({red("tar.size_without_data", UPLOADS + "link.jpg"), red("layout.symlink", UPLOADS + "link.jpg")}),
+        frozenset({red("tar.unusual_form"), red("tar.size_without_data", UPLOADS + "link.jpg"), red("layout.symlink", UPLOADS + "link.jpg")}),
     ),
     Sample(
         # A device holds no data either. Read with its size field, the "picture" would be the next
@@ -3076,7 +3093,7 @@ SAMPLES: list[Sample] = [
             TarMember(UPLOADS + "camera.jpeg", type_flag=CHARACTER_DEVICE, size_field=f"{BLOCK:011o}\x00".encode()),
             TarMember(UPLOADS + "after-device.txt", b"plain text\n"),
         ),
-        frozenset({red("tar.size_without_data", UPLOADS + "camera.jpeg")}),
+        frozenset({red("tar.unusual_form"), red("tar.size_without_data", UPLOADS + "camera.jpeg")}),
     ),
     Sample(
         # Solaris's 'X' extended header names the file; GNU tar, bsdtar and tarfile apply it.
@@ -3085,7 +3102,7 @@ SAMPLES: list[Sample] = [
             TarMember("PaxHeader/readme", pax_record("path", MU_PLUGIN), type_flag=PAX_SOLARIS),
             TarMember(UPLOADS + "readme.txt", code("exec($target);")),
         ),
-        frozenset({red("loaded.launch_call", MU_PLUGIN)}),
+        frozenset({red("tar.unusual_form"), red("loaded.launch_call", MU_PLUGIN)}),
     ),
     Sample(
         # A pax length that is not decimal: GNU tar, bsdtar and busybox ignore the header and
@@ -3095,7 +3112,7 @@ SAMPLES: list[Sample] = [
             TarMember("PaxHeader/loader", pax_record("path", UPLOADS + "notes.txt", length_text="{:#x}"), type_flag=PAX),
             TarMember(MU_PLUGIN, code("exec($target);")),
         ),
-        frozenset({red("tar.malformed_pax"), red("loaded.launch_call", MU_PLUGIN)}),
+        frozenset({red("tar.unusual_form"), red("tar.malformed_pax"), red("loaded.launch_call", MU_PLUGIN)}),
     ),
     Sample(
         # A pax size that is not decimal is passed over, as GNU tar does; the data then runs into
@@ -3105,7 +3122,7 @@ SAMPLES: list[Sample] = [
             TarMember("PaxHeader/loader", pax_record("size", "0x10"), type_flag=PAX),
             TarMember(MU_PLUGIN, b"<?php // the data the header's size leaves out\n", size_field=b"00000000000\x00"),
         ),
-        frozenset({red("tar.malformed_pax"), red("tar.damaged_header"), red("tar.size_read_differently", MU_PLUGIN)}),
+        frozenset({red("tar.unusual_form"), red("tar.malformed_pax"), red("tar.damaged_header"), red("tar.size_read_differently", MU_PLUGIN)}),
     ),
     # The second Fable review (2026-11-21): headers tar programs read differently, each hiding a
     # mu-plugin behind a decoy name. Wherever one of the programs writes the mu-plugin, it must be
@@ -3116,19 +3133,19 @@ SAMPLES: list[Sample] = [
         # A byte order mark in front of the key: no program knows "﻿path", all write the mu-plugin.
         "tar_pax_bom_key",
         tar_site_with(pax_header(pax_raw(b" \xef\xbb\xbfpath=" + DECOY.encode() + b"\n")), TarMember(MU_PLUGIN, MU_CODE)),
-        frozenset({red("loaded.launch_call", MU_PLUGIN)}),
+        frozenset({red("tar.unusual_form"), red("loaded.launch_call", MU_PLUGIN)}),
     ),
     Sample(
         # An empty path: GNU tar and bsdtar keep the header's name.
         "tar_pax_empty_path",
         tar_site_with(pax_header(pax_record("path", "")), TarMember(MU_PLUGIN, MU_CODE)),
-        frozenset({red("loaded.launch_call", MU_PLUGIN)}),
+        frozenset({red("tar.unusual_form"), red("loaded.launch_call", MU_PLUGIN)}),
     ),
     Sample(
         # GNU tar, bsdtar and busybox cut the path at the NUL.
         "tar_pax_nul_in_path",
         tar_site_with(pax_header(pax_raw(b" path=" + MU_PLUGIN.encode() + b"\x00.txt\n")), TarMember(DECOY, MU_CODE)),
-        frozenset({*hidden_mu_findings(), red("tar.read_differently", MU_PLUGIN)}),
+        frozenset({red("tar.unusual_form"), *hidden_mu_findings(), red("tar.read_differently", MU_PLUGIN)}),
     ),
     Sample(
         # A pax path, then a GNU long name: GNU tar and tarfile take the first, bsdtar and busybox the second.
@@ -3137,19 +3154,19 @@ SAMPLES: list[Sample] = [
             pax_header(pax_record("path", MU_PLUGIN)), TarMember("././@LongLink", DECOY.encode() + b"\x00", type_flag=GNU_LONG_NAME),
             TarMember("short.txt", MU_CODE),
         ),
-        frozenset({*hidden_mu_findings(), red("tar.read_differently", MU_PLUGIN), *SHORT_NAME_FINDINGS}),
+        frozenset({red("tar.unusual_form"), *hidden_mu_findings(), red("tar.read_differently", MU_PLUGIN), *SHORT_NAME_FINDINGS}),
     ),
     Sample(
         # Two pax headers in a row: GNU tar takes the second alone, busybox and tarfile add them up.
         "tar_two_pax_headers",
         tar_site_with(pax_header(pax_record("path", DECOY)), pax_header(pax_record("mtime", "1")), TarMember(MU_PLUGIN, MU_CODE)),
-        frozenset({*hidden_mu_findings(), red("tar.read_differently", MU_PLUGIN)}),
+        frozenset({red("tar.unusual_form"), *hidden_mu_findings(), red("tar.read_differently", MU_PLUGIN)}),
     ),
     Sample(
         # A global path: GNU tar and tarfile write the decoy, bsdtar and busybox the mu-plugin.
         "tar_global_path",
         tar_site_with(pax_header(pax_record("path", DECOY), type_flag=PAX_GLOBAL), TarMember(MU_PLUGIN, MU_CODE)),
-        frozenset({*hidden_mu_findings(), red("tar.read_differently", DECOY)}),
+        frozenset({red("tar.unusual_form"), *hidden_mu_findings(), red("tar.read_differently", DECOY)}),
     ),
     Sample(
         # A global size: GNU tar alone reads 512 bytes of the next file and finds the mu-plugin's
@@ -3159,31 +3176,31 @@ SAMPLES: list[Sample] = [
             pax_header(pax_record("size", str(BLOCK)), type_flag=PAX_GLOBAL),
             TarMember(GLOBAL_SIZE_DATA, b"j" * BLOCK + record(TarMember(MU_PLUGIN, MU_CODE))),
         ),
-        frozenset({red("tar.size_read_differently", GLOBAL_SIZE_DATA)}),
+        frozenset({red("tar.unusual_form"), red("tar.size_read_differently", GLOBAL_SIZE_DATA)}),
     ),
     Sample(
         # A valid path record, then a malformed one: GNU tar and busybox apply the first, bsdtar neither.
         "tar_pax_valid_then_malformed",
         tar_site_with(pax_header(pax_record("path", MU_PLUGIN) + b"zz junk\n"), TarMember(DECOY, MU_CODE)),
-        frozenset({*hidden_mu_findings(), red("tar.read_differently", MU_PLUGIN), red("tar.malformed_pax")}),
+        frozenset({red("tar.unusual_form"), *hidden_mu_findings(), red("tar.read_differently", MU_PLUGIN), red("tar.malformed_pax")}),
     ),
     Sample(
         # Two blanks after the length: GNU tar alone skips them and reads "path".
         "tar_pax_two_blanks",
         tar_site_with(pax_header(pax_raw(b"  path=" + MU_PLUGIN.encode() + b"\n")), TarMember(DECOY, MU_CODE)),
-        frozenset({*hidden_mu_findings(), red("tar.read_differently", MU_PLUGIN)}),
+        frozenset({red("tar.unusual_form"), *hidden_mu_findings(), red("tar.read_differently", MU_PLUGIN)}),
     ),
     Sample(
         # A key holding NUL: GNU tar stops reading the header there, bsdtar and busybox read on.
         "tar_pax_nul_in_key",
         tar_site_with(pax_header(pax_raw(b" a\x00b=c\n") + pax_record("path", DECOY)), TarMember(MU_PLUGIN, MU_CODE)),
-        frozenset({*hidden_mu_findings(), red("tar.read_differently", MU_PLUGIN)}),
+        frozenset({red("tar.unusual_form"), *hidden_mu_findings(), red("tar.read_differently", MU_PLUGIN)}),
     ),
     Sample(
         # A pax path waiting for its header, a damaged block, then the header: GNU tar forgets the path.
         "tar_override_across_damaged_block",
         tar_site_with(pax_header(pax_record("path", DECOY)), TarMember("broken", JPEG, checksum_shift=1), TarMember(MU_PLUGIN, MU_CODE)),
-        frozenset({*hidden_mu_findings(), red("tar.read_differently", DECOY), red("tar.damaged_header")}),
+        frozenset({red("tar.unusual_form"), *hidden_mu_findings(), red("tar.read_differently", DECOY), red("tar.damaged_header")}),
     ),
     Sample(
         # A gzip header with 140 KB of name: it read as no archive at all, a database dump alone.
@@ -3191,11 +3208,75 @@ SAMPLES: list[Sample] = [
         lambda: gzip_with_name(craft_tar([*from_zip_members(site()), TarMember(MU_PLUGIN, MU_CODE)]), b"n" * 140_000),
         frozenset({red("loaded.launch_call", MU_PLUGIN)}),
     ),
+    # The canonical form (tar-form.js, 2026-11-21): outside the one form every tar program reads
+    # alike, the archive is red whatever else it says, and what it does read is still checked.
+    Sample(
+        # A tab before the size digits: GNU tar and tarfile read the size, this reader cannot. The
+        # .tar.gz held no other header and went the dump's way, 0 red (the third review's w10).
+        "tar_gz_size_with_tab",
+        lambda: with_gzip(craft_tar([TarMember(MU_PLUGIN, MU_CODE, size_field=b"\t" + f"{len(MU_CODE):010o}\x00".encode())])),
+        frozenset({red("tar.unusual_form"), red("tar.damaged_header"), unchecked("scan.not_wordpress")}),
+    ),
+    Sample(
+        # The same without the end marker: no entry and no end, which until then meant a dump.
+        "tar_gz_size_with_tab_no_end",
+        lambda: with_gzip(craft_tar([TarMember(MU_PLUGIN, MU_CODE, size_field=b"\t" + f"{len(MU_CODE):010o}\x00".encode())], end=b"")),
+        frozenset({red("tar.unusual_form"), red("tar.damaged_header"), unchecked("tar.no_end"), unchecked("scan.not_wordpress")}),
+    ),
+    Sample(
+        # A tab in the mode field: tarfile and GNU tar read it, the canonical form does not.
+        "tar_mode_with_tab",
+        lambda: craft_tar(from_zip_members(site()), end=b"") + patched_record(TarMember(UPLOADS + "notes-tab.txt", b"plain text\n"), 100, b"\t000644\x00") + END_MARKER,
+        frozenset({red("tar.unusual_form")}),
+    ),
+    Sample(
+        # A file written through a symbolic link to a folder lands in mu-plugins (the third review's l18b).
+        "tar_file_through_symlink",
+        tar_site_with(
+            TarMember(ROOT + "wp-content/acme-cache", type_flag=SYMLINK, link="mu-plugins"),
+            TarMember(ROOT + "wp-content/acme-cache/runner.php", MU_CODE),
+        ),
+        frozenset({
+            red("tar.unusual_form"),
+            red("layout.symlink", ROOT + "wp-content/acme-cache"),
+            amber("unproven.launch_call", ROOT + "wp-content/acme-cache/runner.php"),
+            amber("layout.php_outside_code_folders", ROOT + "wp-content/acme-cache/"),
+        }),
+    ),
+    Sample(
+        # node-tar writes a pax size on every header, equal to the header's: read alike, no finding.
+        "tar_pax_size_equal",
+        tar_site_with(pax_header(pax_record("size", str(len(b"plain text\n")))), TarMember(UPLOADS + "notes-pax.txt", b"plain text\n")),
+        frozenset(),
+    ),
+    Sample(
+        # Zero bytes between two gzip members: Python's gzip reads the second, so the scanner does.
+        "tar_gz_member_after_zeros",
+        lambda: (
+            with_gzip(craft_tar(from_zip_members(site()), end=b"")) + b"\x00" * 9
+            + with_gzip(craft_tar([TarMember(MU_PLUGIN, MU_CODE)]))
+        ),
+        frozenset({red("loaded.launch_call", MU_PLUGIN)}),
+    ),
+    Sample(
+        # Reserved gzip flag bits: gzip refuses the file, Python's gzip unpacks it, so the scanner does.
+        "tar_gz_reserved_flags",
+        lambda: with_reserved_flags(with_gzip(craft_tar([*from_zip_members(site()), TarMember(MU_PLUGIN, MU_CODE)]))),
+        frozenset({red("loaded.launch_call", MU_PLUGIN)}),
+    ),
+    Sample(
+        # Named as a tar, it is unpacked with tar, so a gzip holding no tar never reads as a dump here.
+        "tar_named_dump",
+        lambda: gzip.compress(DUMP_EVAL, mtime=0),
+        frozenset({unchecked("tar.not_a_tar")}),
+        completed=False,
+        file_name="site-backup.tar.gz",
+    ),
     Sample(
         # A size nobody can read is skipped like a bad checksum, as GNU tar does.
         "tar_unreadable_size_skipped",
         lambda: craft_tar([TarMember(UPLOADS + "late.jpeg", JPEG, size_field=b"\xff" * 12)]),
-        frozenset({red("tar.damaged_header"), unchecked("scan.not_wordpress")}),
+        frozenset({red("tar.unusual_form"), red("tar.damaged_header"), unchecked("scan.not_wordpress")}),
     ),
     Sample(
         # It starts like a tar (the ustar mark), and no block of it adds up as a header.
@@ -3207,7 +3288,7 @@ SAMPLES: list[Sample] = [
     Sample(
         "tar_file_named_as_folder",
         tar_site_with(TarMember(UPLOADS + "folder/")),
-        frozenset({red("tar.file_named_as_folder", UPLOADS + "folder/")}),
+        frozenset({red("tar.unusual_form"), red("tar.file_named_as_folder", UPLOADS + "folder/")}),
     ),
     Sample(
         "tar_folder_entry",
@@ -3217,7 +3298,7 @@ SAMPLES: list[Sample] = [
     Sample(
         "tar_duplicate_name",
         tar_site_with(TarMember(ROOT + "wp-config.php", b"<?php\ndefine('DB_NAME', 'other');\n")),
-        frozenset({red("tar.duplicate_name", ROOT + "wp-config.php")}),
+        frozenset({red("tar.unusual_form"), red("tar.duplicate_name", ROOT + "wp-config.php")}),
     ),
     Sample(
         # The last file is cut in its data; what of it is missing has nothing to read.
@@ -3230,7 +3311,7 @@ SAMPLES: list[Sample] = [
         # A long name past 1 MB is no honest archive's; nothing after it is listed.
         "tar_damaged",
         tar_site_with(TarMember("././@LongLink", type_flag=GNU_LONG_NAME, size_field=f"{2 * 1024 * 1024:011o}\x00".encode())),
-        frozenset({unchecked("tar.damaged")}),
+        frozenset({red("tar.unusual_form"), unchecked("tar.damaged")}),
     ),
     Sample(
         # The gzip trailer is cut: every file was unpacked, the packing's own check could not run.
@@ -3305,6 +3386,7 @@ SAMPLES: list[Sample] = [
             TarMember("broken.jpeg", JPEG, checksum_shift=1), TarMember("hidden.jpeg", PROGRAM),
         ]))),
         frozenset({
+            red("tar.unusual_form", UPLOADS + "old.tar"),
             red("tar.damaged_header", UPLOADS + "old.tar"),
             red("layout.disguised_executable", UPLOADS + "old.tar" + NESTED + "hidden.jpeg"),
         }),

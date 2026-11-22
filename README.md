@@ -146,8 +146,9 @@ ones.
 - A tar outside the one form it vouches for. It is red, and its list may miss files that a tar
   program writes. Honest archives land there too: sparse files (bsdtar reads them by default),
   GNU incremental dumps and volume labels, and a file of 8 GiB or more, whose size needs a field
-  the form leaves out (GNU's base-256, or a pax size that busybox ignores). Unpack such an archive
-  and pack it again with `tar -czf` or as a zip, and scan that.
+  the form leaves out (GNU's base-256, or a pax size that busybox ignores). Unpack such an archive,
+  pack it again as a zip and scan that. Packing it with `tar -czf` is not enough when that tar is
+  bsdtar (the `tar.exe` of Windows), which writes sparse files as sparse by default.
 
 A zip built on purpose to fool how names and folders are read (a decoy core named so that only
 Windows unpacks it into place, folders that differ only in letter case, entries no unpacker

@@ -190,9 +190,9 @@ fail, which is the proof that the test guards that check. Before the first mutat
 every one of those tests on the untouched scanner and stops if any fails there: a test that
 fails anyway would make every mutation it guards look caught.
 
-`SCANNER_BROWSER=firefox` or `webkit` runs the same suite there. Measured on 2026-11-21 with
-Chromium 151, Firefox 153 and WebKit 26.5: 673 tests pass in all three (the one live test is
-off by default), and 782 of 782 mutations are caught. The same suite can be pointed at a site
+`SCANNER_BROWSER=firefox` or `webkit` runs the same suite there. Measured on 2026-11-22 with
+Chromium 151, Firefox 153 and WebKit 26.5: 681 tests pass in all three (the one live test is
+off by default), and 795 of 795 mutations are caught. The same suite can be pointed at a site
 that carries the scanner, with that site's own header rules (`SCANNER_SITE_ROOT`,
 `SCANNER_PAGE_PATH` and `SCANNER_SERVED`, described in `tests/serve.py`); the pages at
 helban.dev are tested that way before a release. The tests never reach wordpress.org or

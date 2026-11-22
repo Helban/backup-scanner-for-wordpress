@@ -13,7 +13,10 @@
 // type is a regular file. Where the format leaves room to show one thing to a lister and another
 // to an extractor, the entry or the archive carries an anomaly instead of a guess.
 
-import { byteString, headerFormIssue, longNameIssue, mightBeHeader, nameKey, pathIssue, readCanonicalPax } from './tar-form.js';
+import {
+  TYPE_DIRECTORY, TYPE_FILE, TYPE_GNU_LONG_LINK, TYPE_GNU_LONG_NAME, TYPE_HARD_LINK, TYPE_OLD_FILE, TYPE_PAX, TYPE_PAX_GLOBAL, TYPE_SYMLINK,
+  byteString, globalPaxIssue, headerFormIssue, headerSums, isFolderSpelling, localPaxIssue, longNameIssue, mightBeHeader, nameKey, pathIssue,
+} from './tar-form.js';
 import { decodeName } from './zip-reader.js';
 
 const BLOCK_BYTES = 512;
@@ -40,21 +43,12 @@ const POSIX_MAGIC = [0x75, 0x73, 0x74, 0x61, 0x72, 0x00];
 // A long name or a pax record larger than this is not a name an honest archive writes.
 const META_LIMIT_BYTES = 1024 * 1024;
 
-const TYPE_FILE = 0x30;
-const TYPE_OLD_FILE = 0x00;
-const TYPE_HARD_LINK = 0x31;
-const TYPE_SYMLINK = 0x32;
-const TYPE_DIRECTORY = 0x35;
-const TYPE_GNU_LONG_NAME = 0x4c;
-const TYPE_GNU_LONG_LINK = 0x4b;
 const TYPE_GNU_SPARSE = 0x53;
 const TYPE_GNU_DUMPDIR = 0x44;
-const TYPE_PAX = 0x78;
 // Solaris writes a pax extended header as 'X'. GNU tar 1.35, bsdtar and Python's tarfile apply it
 // like 'x'; read as a file, it let an 'X' record name a mu-plugin the scan never listed
 // (2026-11-21, tools/wp-zip-scan/tar-stage2/probe_extractors.py).
 const TYPE_PAX_SOLARIS = 0x58;
-const TYPE_PAX_GLOBAL = 0x67;
 const LOCAL_PAX_TYPES = new Set([TYPE_PAX, TYPE_PAX_SOLARIS]);
 const DECIMAL = /^[0-9]+$/;
 // Character device, block device, FIFO: no data, nothing to read.
@@ -219,19 +213,21 @@ export const createTarIndexer = ({ onEntry, maxEntries }) => {
     // of a 2.6 GB archive in memory until the scan ended (measured 2026-11-21, probe_memory.py).
     nameBytes = nameBytes.slice();
     const globalLink = globalPax.has('linkpath') ? ENCODER.encode(globalPax.get('linkpath')) : null;
-    const linkBytes = next.linkName ?? globalLink ?? fieldBytes(header, LINK_AT, NAME_BYTES);
+    const linkField = fieldBytes(header, LINK_AT, NAME_BYTES);
+    const linkBytes = next.linkName ?? globalLink ?? linkField;
     const size = next.size ?? sizeField;
     // busybox ignores a pax size: where it differs from the header's, programs read different
     // lengths. node-tar writes an equal one on every header, which is read alike.
     if (next.size !== null && next.size !== sizeField) anomalies.push('size_read_differently');
     const hasNoData = TYPES_WITHOUT_DATA.has(type);
     if (hasNoData && size > 0) anomalies.push('size_without_data');
-    const linkField = fieldBytes(header, LINK_AT, NAME_BYTES);
-    const entryIssue = canonicalEntryIssue({
+    const entry = {
       nameBytes, linkBytes, writtenType, isDirectory: writtenType === TYPE_DIRECTORY || isV7Folder,
       hasData: !hasNoData, sizeField, size, hasOwnLink: linkField.length > 0 || next.linkName !== null,
-    });
+    };
+    const entryIssue = canonicalEntryIssue(entry);
     if (entryIssue !== '') noteUnusual(entryIssue, headerOffset);
+    rememberEntry(entry);
     const isSparse = next.sparse || type === TYPE_GNU_SPARSE;
     const storedBytes = hasNoData ? 0 : size;
     // A sparse file's stored data is not its contents; its size as extracted is kept apart.
@@ -257,31 +253,34 @@ export const createTarIndexer = ({ onEntry, maxEntries }) => {
   // links only, a hard link to a regular file listed before it, and no name twice (folders
   // aside), so that which copy of a name ends up on disk never depends on the program.
   const canonicalEntryIssue = ({ nameBytes, linkBytes, writtenType, isDirectory, hasData, sizeField, size, hasOwnLink }) => {
-    const key = nameKey(nameBytes);
-    const wasFolder = seenNames.get(key);
-    seenNames.set(key, isDirectory && wasFolder !== false);
-    // A file under the name of an earlier symbolic link lands wherever that link points: tarfile
-    // and busybox follow it (the third review's l18).
-    const passesLink = symlinkNames.passedBy(key);
-    if (writtenType === TYPE_SYMLINK) symlinkNames.add(key);
-    const isFile = !isDirectory && (writtenType === TYPE_FILE || writtenType === TYPE_OLD_FILE);
-    const linkTarget = byteString(linkBytes);
-    if (isFile) fileNames.add(byteString(nameBytes));
-    const pathProblem = pathIssue(nameBytes, { isDirectory });
+    const pathProblem = pathIssue(nameBytes);
     if (pathProblem !== '') return pathProblem;
+    if (!isDirectory && isFolderSpelling(nameBytes)) return 'name';
     if ((!hasData && sizeField !== 0) || size !== sizeField) return 'size';
     const isLink = writtenType === TYPE_HARD_LINK || writtenType === TYPE_SYMLINK;
     if (isLink ? linkBytes.length === 0 || linkBytes.includes(0) : hasOwnLink) return 'link';
-    if (writtenType === TYPE_HARD_LINK && !fileNames.has(linkTarget)) return 'link';
+    if (writtenType === TYPE_HARD_LINK && !fileNames.has(byteString(linkBytes))) return 'link';
+    const key = nameKey(nameBytes);
+    const wasFolder = seenNames.get(key);
     if (wasFolder !== undefined && !(wasFolder && isDirectory)) return 'duplicate_name';
-    return passesLink ? 'through_link' : '';
+    // A file under the name of an earlier symbolic link lands wherever that link points: tarfile
+    // and busybox follow it (the third review's l18).
+    return symlinkNames.passedBy(key) ? 'through_link' : '';
+  };
+
+  const rememberEntry = ({ nameBytes, writtenType, isDirectory }) => {
+    const key = nameKey(nameBytes);
+    seenNames.set(key, isDirectory && seenNames.get(key) !== false);
+    if (writtenType === TYPE_SYMLINK) symlinkNames.add(key);
+    if (!isDirectory && (writtenType === TYPE_FILE || writtenType === TYPE_OLD_FILE)) fileNames.add(byteString(nameBytes));
   };
 
   const readMeta = () => {
     if (pending.length < meta.padded) return false;
     const content = take(meta.padded).subarray(0, meta.size);
     const isLong = meta.type === TYPE_GNU_LONG_NAME || meta.type === TYPE_GNU_LONG_LINK;
-    const issue = isLong ? longNameIssue(content) : readCanonicalPax(content, { isGlobal: meta.type === TYPE_PAX_GLOBAL }).issue;
+    const paxIssue = meta.type === TYPE_PAX_GLOBAL ? globalPaxIssue : localPaxIssue;
+    const issue = isLong ? longNameIssue(content) : paxIssue(content);
     if (issue !== '') noteUnusual(issue, meta.headerOffset);
     if (meta.type === TYPE_GNU_LONG_NAME) readLongName(fieldBytes(content, 0, content.length).slice());
     if (meta.type === TYPE_GNU_LONG_LINK) next.hasLongLink = true;
@@ -487,7 +486,7 @@ const createFolderSet = () => {
       for (let at = 0; at < key.length; at += 1) {
         const candidates = key.charCodeAt(at) === SLASH && at > 0 ? byHash.get(hash) : undefined;
         if (candidates !== undefined && candidates.some((folder) => folder.length === at && key.startsWith(folder))) return true;
-        hash = (Math.imul(hash, PREFIX_HASH_BASE) + key.charCodeAt(at)) | 0;
+        hash = hashStep(hash, key.charCodeAt(at));
       }
       return false;
     },
@@ -496,9 +495,11 @@ const createFolderSet = () => {
 
 const PREFIX_HASH_BASE = 0x01000193;
 
+const hashStep = (hash, code) => (Math.imul(hash, PREFIX_HASH_BASE) + code) | 0;
+
 const hashOf = (key) => {
   let hash = 0;
-  for (let at = 0; at < key.length; at += 1) hash = (Math.imul(hash, PREFIX_HASH_BASE) + key.charCodeAt(at)) | 0;
+  for (let at = 0; at < key.length; at += 1) hash = hashStep(hash, key.charCodeAt(at));
   return hash;
 };
 
@@ -562,13 +563,7 @@ const joinPath = (prefix, name) => {
 const hasValidChecksum = (header) => {
   const stored = readNumber(header.subarray(CHECKSUM_AT, CHECKSUM_AT + CHECKSUM_BYTES));
   if (stored === null) return false;
-  let unsigned = 0;
-  let signed = 0;
-  for (let index = 0; index < BLOCK_BYTES; index += 1) {
-    const byte = index >= CHECKSUM_AT && index < CHECKSUM_AT + CHECKSUM_BYTES ? ASCII_SPACE : header[index];
-    unsigned += byte;
-    signed += byte > 127 ? byte - 256 : byte;
-  }
+  const { unsigned, signed } = headerSums(header);
   return stored === unsigned || stored === signed;
 };
 

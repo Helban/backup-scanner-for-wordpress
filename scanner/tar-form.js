@@ -12,12 +12,22 @@
 // Each function returns '' for the canonical form, or the reason it is not.
 
 const BLOCK_BYTES = 512;
-const ASCII_SPACE = 0x20;
-const ASCII_ZERO = 0x30;
 const NUL = 0x00;
-const SLASH = 0x2f;
-const BACKSLASH = 0x5c;
+const ASCII_TAB = 0x09;
+const ASCII_NEWLINE = 0x0a;
+const ASCII_CARRIAGE_RETURN = 0x0d;
+const ASCII_SPACE = 0x20;
+const ASCII_PLUS = 0x2b;
+const ASCII_MINUS = 0x2d;
 const DOT = 0x2e;
+const SLASH = 0x2f;
+const ASCII_ZERO = 0x30;
+const ASCII_SEVEN = 0x37;
+const ASCII_EQUALS = 0x3d;
+const BACKSLASH = 0x5c;
+const LAST_PRINTABLE = 0x7e;
+const LAST_ASCII = 0x7f;
+const HIGH_BIT = 0x80;
 
 const CHECKSUM_AT = 148;
 const CHECKSUM_BYTES = 8;
@@ -55,19 +65,12 @@ const TYPES_BY_MAGIC = new Map([
   ['v7', new Set(ENTRY_TYPES)],
 ]);
 
-// 'posix', 'gnu', 'v7' (no magic, the rest of the block empty), or '' for anything else.
-export const magicOf = (header) => {
-  if (startsWith(header, MAGIC_AT, POSIX_MAGIC)) return 'posix';
-  if (startsWith(header, MAGIC_AT, GNU_MAGIC)) return 'gnu';
-  return isZero(header, MAGIC_AT, BLOCK_BYTES) ? 'v7' : '';
-};
-
 // One header block, on its own.
 export const headerFormIssue = (header) => {
   const magic = magicOf(header);
   if (magic === '') return 'magic';
   const checksum = canonicalNumber(header, CHECKSUM_AT, CHECKSUM_BYTES);
-  if (checksum === null || checksum !== unsignedSum(header)) return 'checksum';
+  if (checksum === null || checksum !== headerSums(header).unsigned) return 'checksum';
   const numberFields = magic === 'v7' ? NUMBER_FIELDS : [...NUMBER_FIELDS, ...DEVICE_FIELDS];
   // A field of NULs only is 0 to every program (node-tar's portable mode, PHP's PharData).
   if (numberFields.some(([at, length]) => !isZero(header, at, at + length) && canonicalNumber(header, at, length) === null)) return 'number';
@@ -80,6 +83,19 @@ export const headerFormIssue = (header) => {
   return '';
 };
 
+// The sums a checksum field is compared with: of the block's bytes with the field itself counted
+// as spaces, unsigned and (as old tars wrote it) signed.
+export const headerSums = (block) => {
+  let unsigned = 0;
+  let signed = 0;
+  for (let index = 0; index < BLOCK_BYTES; index += 1) {
+    const byte = index >= CHECKSUM_AT && index < CHECKSUM_AT + CHECKSUM_BYTES ? ASCII_SPACE : block[index];
+    unsigned += byte;
+    signed += byte & HIGH_BIT ? byte - 256 : byte;
+  }
+  return { unsigned, signed };
+};
+
 // Whether some tar program may take this block for a header: its checksum field, read the way
 // any of GNU tar, tarfile, busybox or bsdtar reads it, matches the block. A block nobody takes
 // for a header is damage (or a database dump that is not a tar at all); one that some program
@@ -88,13 +104,7 @@ export const mightBeHeader = (block) => {
   if (block.length < BLOCK_BYTES) return false;
   const readings = checksumReadings(block.subarray(CHECKSUM_AT, CHECKSUM_AT + CHECKSUM_BYTES));
   if (readings.size === 0) return false;
-  let unsigned = 0;
-  let signed = 0;
-  for (let index = 0; index < BLOCK_BYTES; index += 1) {
-    const byte = index >= CHECKSUM_AT && index < CHECKSUM_AT + CHECKSUM_BYTES ? ASCII_SPACE : block[index];
-    unsigned += byte;
-    signed += byte > 127 ? byte - 256 : byte;
-  }
+  const { unsigned, signed } = headerSums(block);
   return readings.has(unsigned) || readings.has(signed);
 };
 
@@ -118,59 +128,67 @@ const TIME = /^-?[0-9]+(\.[0-9]+)?$/;
 const VALUE_FORMS = new Map([
   ['size', DECIMAL], ['uid', DECIMAL], ['gid', DECIMAL], ['mtime', TIME], ['atime', TIME], ['ctime', TIME],
 ]);
+const NAME_KEYS = ['path', 'linkpath', 'uname', 'gname'];
+const NON_EMPTY_KEYS = ['path', 'linkpath'];
 const UTF8 = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true });
-const LAST_PRINTABLE = 0x7e;
+
+const isLocalKey = (key) => LOCAL_KEYS.has(key) || LOCAL_KEY_PREFIXES.some((prefix) => key.startsWith(prefix));
+const isGlobalKey = (key) => GLOBAL_KEYS.has(key);
 
 // A pax header: "<length> <key>=<value>\n" records that fill the data exactly, the length in
-// plain decimal followed by one space, each key once and known, path and linkpath non-empty,
-// without NUL and in UTF-8 unless the header says hdrcharset=BINARY. Returns { issue, records }.
-export const readCanonicalPax = (content, { isGlobal }) => {
+// plain decimal followed by one space, each key once and known, and the values in the forms
+// paxValueIssue allows. Returns the issue ('' for none).
+export const localPaxIssue = (content) => paxIssue(content, isLocalKey);
+export const globalPaxIssue = (content) => paxIssue(content, isGlobalKey);
+
+const paxIssue = (content, isKnownKey) => {
+  if (content.length === 0) return 'pax_records';
   const records = new Map();
-  let at = 0;
-  if (content.length === 0) return { issue: 'pax_records', records };
-  while (at < content.length) {
+  for (let at = 0; at < content.length;) {
     const space = content.indexOf(ASCII_SPACE, at);
-    if (space < 0) return { issue: 'pax_records', records };
+    if (space < 0) return 'pax_records';
     const lengthText = asciiOf(content.subarray(at, space));
-    if (!DECIMAL.test(lengthText) || lengthText === '0') return { issue: 'pax_records', records };
+    if (!DECIMAL.test(lengthText) || lengthText === '0') return 'pax_records';
     const recordEnd = at + Number(lengthText);
-    if (recordEnd > content.length || recordEnd <= space + 1 || content[recordEnd - 1] !== 0x0a) return { issue: 'pax_records', records };
+    if (recordEnd > content.length || recordEnd <= space + 1 || content[recordEnd - 1] !== ASCII_NEWLINE) return 'pax_records';
     const record = content.subarray(space + 1, recordEnd - 1);
-    const equals = record.indexOf(0x3d);
-    if (equals <= 0) return { issue: 'pax_records', records };
+    const equals = record.indexOf(ASCII_EQUALS);
+    if (equals <= 0) return 'pax_records';
     const key = asciiOf(record.subarray(0, equals));
-    if (key === null || records.has(key)) return { issue: 'pax_records', records };
-    if (!(isGlobal ? GLOBAL_KEYS.has(key) : LOCAL_KEYS.has(key) || LOCAL_KEY_PREFIXES.some((prefix) => key.startsWith(prefix)))) {
-      return { issue: 'pax_key', records };
-    }
+    if (key === null || records.has(key)) return 'pax_records';
+    if (!isKnownKey(key)) return 'pax_key';
     records.set(key, record.subarray(equals + 1));
     at = recordEnd;
   }
+  return paxValueIssue(records);
+};
+
+// Path and link path not empty; the four names without NUL and in UTF-8 unless the header says
+// hdrcharset=BINARY; numbers and times in plain decimal.
+const paxValueIssue = (records) => {
   const isBinary = records.has('hdrcharset') && asciiOf(records.get('hdrcharset')) === 'BINARY';
-  for (const key of ['path', 'linkpath', 'uname', 'gname']) {
-    if (records.has(key) && !isNameValue(records.get(key), { isBinary, mayBeEmpty: key === 'uname' || key === 'gname' })) {
-      return { issue: 'pax_value', records };
-    }
+  if (NON_EMPTY_KEYS.some((key) => records.has(key) && records.get(key).length === 0)) return 'pax_value';
+  for (const key of NAME_KEYS.filter((name) => records.has(name))) {
+    const nameBytes = records.get(key);
+    if (nameBytes.includes(NUL) || (!isBinary && !isUtf8(nameBytes))) return 'pax_value';
   }
   for (const [key, form] of VALUE_FORMS) {
-    if (records.has(key) && !form.test(asciiOf(records.get(key)) ?? '')) return { issue: 'pax_value', records };
+    if (records.has(key) && !form.test(asciiOf(records.get(key)) ?? '')) return 'pax_value';
   }
-  return { issue: '', records };
+  return '';
 };
 
 // The name a file is written under, whatever record gave it: relative, components neither
-// empty nor "." nor "..", no NUL and no backslash (Windows tar takes it for a folder break),
-// a trailing slash on folders only. One leading "./" is what `tar -C dir .` writes.
-export const pathIssue = (nameBytes, { isDirectory }) => {
+// empty nor "." nor "..", no NUL and no backslash (Windows tar takes it for a folder break).
+// One leading "./" is what `tar -C dir .` writes, and "." or "./" alone is that folder. A
+// trailing slash is judged by the caller, which knows whether the entry is a folder.
+export const pathIssue = (nameBytes) => {
   let name = nameBytes;
   if (name.includes(NUL) || name.includes(BACKSLASH)) return 'name';
-  if (isDirectory && (isBytes(name, [DOT]) || isBytes(name, [DOT, SLASH]))) return '';
+  if (isBytes(name, [DOT]) || isBytes(name, [DOT, SLASH])) return '';
   if (name.length > 2 && name[0] === DOT && name[1] === SLASH) name = name.subarray(2);
+  if (name.length > 1 && name[name.length - 1] === SLASH) name = name.subarray(0, name.length - 1);
   if (name.length === 0 || name[0] === SLASH) return 'name';
-  if (name[name.length - 1] === SLASH) {
-    if (!isDirectory) return 'name';
-    name = name.subarray(0, name.length - 1);
-  }
   let start = 0;
   for (let index = 0; index <= name.length; index += 1) {
     if (index < name.length && name[index] !== SLASH) continue;
@@ -180,6 +198,11 @@ export const pathIssue = (nameBytes, { isDirectory }) => {
   }
   return '';
 };
+
+// Whether the name is spelled as a folder: ending in a slash, or "." itself.
+export const isFolderSpelling = (nameBytes) => (
+  nameBytes[nameBytes.length - 1] === SLASH || isBytes(nameBytes, [DOT])
+);
 
 // A name as one key for "seen before": the bytes without a leading "./" and a trailing slash,
 // one character per byte so that no two byte strings meet.
@@ -198,6 +221,13 @@ export const byteString = (bytes) => {
 
 const STRING_PIECE = 4096;
 
+// 'posix', 'gnu', 'v7' (no magic, the rest of the block empty), or '' for anything else.
+const magicOf = (header) => {
+  if (startsWith(header, MAGIC_AT, POSIX_MAGIC)) return 'posix';
+  if (startsWith(header, MAGIC_AT, GNU_MAGIC)) return 'gnu';
+  return isZero(header, MAGIC_AT, BLOCK_BYTES) ? 'v7' : '';
+};
+
 // The canonical number: optional leading spaces, octal digits, then only spaces or NULs. Every
 // program reads this the same; GNU's base-256 and the forms some program alone accepts (a tab,
 // a sign, "0o", an underscore, a digit after the terminator) are left out.
@@ -205,50 +235,38 @@ const canonicalNumber = (bytes, at, length) => {
   let index = at;
   const end = at + length;
   while (index < end && bytes[index] === ASCII_SPACE) index += 1;
-  let value = 0;
-  let digits = 0;
-  while (index < end && bytes[index] >= ASCII_ZERO && bytes[index] <= ASCII_ZERO + 7) {
-    value = value * 8 + (bytes[index] - ASCII_ZERO);
-    digits += 1;
-    index += 1;
-  }
-  if (digits === 0) return null;
-  for (; index < end; index += 1) if (bytes[index] !== ASCII_SPACE && bytes[index] !== NUL) return null;
-  return value;
+  const run = octalRun(bytes.subarray(0, end), index);
+  if (run.digits === 0) return null;
+  for (index = run.end; index < end; index += 1) if (bytes[index] !== ASCII_SPACE && bytes[index] !== NUL) return null;
+  return run.number;
 };
 
-// The values tar programs read from a checksum field (2026-11-21, the third review's cases):
+// The numbers tar programs read from a checksum field (2026-11-21, the third review's cases):
 //   GNU tar 1.35  - leading white space, octal digits, then end, NUL or white space;
 //   tarfile       - cut at NUL, white space stripped, int(text, 8): a sign, "0o", underscores;
 //                   base-256 when the first byte is 0x80 or 0xff;
 //   busybox       - strtoull(text, 8) with a sign, ended by NUL or space;
-//   bsdtar        - leading spaces and tabs, a sign, octal digits up to the first other byte;
+//   bsdtar        - leading spaces and tabs, a minus, octal digits up to the first other byte;
 //                   base-256 when the first byte has its high bit set.
 // Generous on purpose: a reading too many costs a finding on a damaged tar, one too few hides one.
 const checksumReadings = (field) => {
-  const readings = new Set();
-  const add = (value) => {
-    if (value !== null && Number.isSafeInteger(value)) readings.add(value);
-  };
-  add(readGnu(field));
-  add(readTarfile(field));
-  add(readBusybox(field));
-  add(readBsdtar(field));
-  if ((field[0] & 0x80) !== 0) add(readBase256(field));
-  return readings;
+  const candidates = [readGnu(field), readTarfile(field), readBusybox(field), readBsdtar(field)];
+  if (field[0] & HIGH_BIT) candidates.push(readBase256(field));
+  return new Set(candidates.filter((number) => number !== null && Number.isSafeInteger(number)));
 };
 
-const isWhite = (byte) => byte === ASCII_SPACE || (byte >= 0x09 && byte <= 0x0d);
-const isOctal = (byte) => byte >= ASCII_ZERO && byte <= ASCII_ZERO + 7;
+const isWhite = (byte) => byte === ASCII_SPACE || (byte >= ASCII_TAB && byte <= ASCII_CARRIAGE_RETURN);
+const isOctal = (byte) => byte >= ASCII_ZERO && byte <= ASCII_SEVEN;
 
+// The octal digits from `start` on: their number, where they end, how many there were.
 const octalRun = (field, start) => {
   let index = start;
-  let value = 0;
+  let number = 0;
   while (index < field.length && isOctal(field[index])) {
-    value = value * 8 + (field[index] - ASCII_ZERO);
+    number = number * 8 + (field[index] - ASCII_ZERO);
     index += 1;
   }
-  return { value, end: index, digits: index - start };
+  return { number, end: index, digits: index - start };
 };
 
 const readGnu = (field) => {
@@ -256,7 +274,7 @@ const readGnu = (field) => {
   while (index < field.length && isWhite(field[index])) index += 1;
   const run = octalRun(field, index);
   if (run.digits === 0) return null;
-  return run.end === field.length || field[run.end] === NUL || isWhite(field[run.end]) ? run.value : null;
+  return run.end === field.length || field[run.end] === NUL || isWhite(field[run.end]) ? run.number : null;
 };
 
 // Python's str.strip() and int() take \x1c-\x1f for white space too.
@@ -265,7 +283,7 @@ const PYTHON_WHITE = /^[\t\n\v\f\r\x1c-\x1f ]+|[\t\n\v\f\r\x1c-\x1f ]+$/g;
 const readTarfile = (field) => {
   const end = field.indexOf(NUL);
   const cut = end < 0 ? field : field.subarray(0, end);
-  if (cut.some((byte) => byte > 0x7f)) return null;
+  if (cut.some((byte) => byte > LAST_ASCII)) return null;
   let body = String.fromCharCode(...cut).replace(PYTHON_WHITE, '');
   if (body === '') return 0;
   let sign = 1;
@@ -282,48 +300,37 @@ const readBusybox = (field) => {
   let index = 0;
   while (index < field.length && isWhite(field[index])) index += 1;
   let sign = 1;
-  if (field[index] === 0x2b || field[index] === 0x2d) {
-    sign = field[index] === 0x2d ? -1 : 1;
+  if (field[index] === ASCII_PLUS || field[index] === ASCII_MINUS) {
+    sign = field[index] === ASCII_MINUS ? -1 : 1;
     index += 1;
   }
   const run = octalRun(field, index);
   if (run.digits === 0) return null;
   if (run.end < field.length && field[run.end] !== NUL && field[run.end] !== ASCII_SPACE) return null;
-  return sign * run.value;
+  return sign * run.number;
 };
 
 const readBsdtar = (field) => {
   let index = 0;
-  while (index < field.length && (field[index] === ASCII_SPACE || field[index] === 0x09)) index += 1;
+  while (index < field.length && (field[index] === ASCII_SPACE || field[index] === ASCII_TAB)) index += 1;
   let sign = 1;
-  if (field[index] === 0x2d) {
+  if (field[index] === ASCII_MINUS) {
     sign = -1;
     index += 1;
   }
-  if (field[index] === 0x2b) index += 1;
-  return sign * octalRun(field, index).value;
+  if (field[index] === ASCII_PLUS) index += 1;
+  return sign * octalRun(field, index).number;
 };
 
 const readBase256 = (field) => {
-  let value = field[0] & 0x7f;
-  for (let index = 1; index < field.length; index += 1) value = value * 256 + field[index];
-  return value;
+  let number = field[0] & ~HIGH_BIT;
+  for (let index = 1; index < field.length; index += 1) number = number * 256 + field[index];
+  return number;
 };
 
-const unsignedSum = (header) => {
-  let sum = 0;
-  for (let index = 0; index < BLOCK_BYTES; index += 1) {
-    sum += index >= CHECKSUM_AT && index < CHECKSUM_AT + CHECKSUM_BYTES ? ASCII_SPACE : header[index];
-  }
-  return sum;
-};
-
-const isNameValue = (value, { isBinary, mayBeEmpty }) => {
-  if (value.length === 0) return mayBeEmpty;
-  if (value.includes(NUL)) return false;
-  if (isBinary) return true;
+const isUtf8 = (bytes) => {
   try {
-    UTF8.decode(value);
+    UTF8.decode(bytes);
   } catch (error) {
     if (error instanceof TypeError) return false;
     throw error;

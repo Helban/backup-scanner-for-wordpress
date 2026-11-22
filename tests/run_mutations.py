@@ -1264,7 +1264,10 @@ TAR_MUTATIONS: list[Mutation] = [
         "records in front of a file not judged", TAR_READER, "      if (isRepeated || isMixed) noteUnusual('records', headerOffset);\n", "",
         (sample("tar_two_pax_headers"),),
     ),
-    Mutation("a file through a symlink passes", TAR_READER, "    return passesLink ? 'through_link' : '';", "    return '';", (sample("tar_file_through_symlink"),)),
+    Mutation(
+        "a file through a symlink passes", TAR_READER, "    return symlinkNames.passedBy(key) ? 'through_link' : '';", "    return '';",
+        (sample("tar_file_through_symlink"),),
+    ),
     Mutation(
         "damage among entries not unusual", TAR_READER, "      if (entries > 0 && damagedAt >= 0 && (unusual === null || damagedAt < unusual.offset)) {",
         "      if (false) {", (sample("tar_damaged_header"),),

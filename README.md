@@ -79,12 +79,13 @@ and fails if the marker shows up in any request
 - Server settings in `.htaccess`, `.user.ini` and `php.ini`: a picture handed to PHP or run
   as a program, a file prepended to every request, server-side includes switched on, redirects
   to other hosts. ([details](docs/rules.md#server-settings))
-- The database dump: `eval` of `base64_decode`, PHP kept by snippet plugins, scripts loaded
-  from other hosts, text written for an AI assistant that reads the copy. A `.sql` file is read
-  as it is, a `.sql.gz` and UpdraftPlus's `-db.gz` are unpacked on the way, every gzip member
-  of the latter and not only the first. A dump dropped on the page by itself gets the same
-  checks, except whether its active plugins are in the copy, which needs the copy; the report
-  says so. ([details](docs/rules.md#the-database))
+- The database dump: `eval` of `base64_decode`, a program, PHP or an archive kept in a row as
+  base64 text, PHP kept by snippet plugins, scripts loaded from other hosts, text written for an
+  AI assistant that reads the copy. A `.sql` file is read as it is, a `.sql.gz` and
+  UpdraftPlus's `-db.gz` are unpacked on the way, every gzip member of the latter and not only
+  the first. A dump dropped on the page by itself gets the same checks, except whether its active
+  plugins are in the copy, which needs the copy; the report says so.
+  ([details](docs/rules.md#the-database))
 - Files from attacks described in public, matched by SHA-256 (`scanner/indicators.js`). The
   zip the original attack was sent in is on the list too, found in the copy or as the file you
   drop on the page. ([details](docs/rules.md#known-attacks))
@@ -123,15 +124,15 @@ ones.
 ## What it does not catch
 
 - A payload that has to be decoded before it shows: encrypted, packed into the pixels of a real
-  picture, split across PHP variables and glued at run time, or fetched from the database. The
-  scanner looks for the code that would decode it, and flags `gzinflate(base64_decode(...))` as a
-  shape without unpacking it.
+  picture, split across PHP variables and glued at run time, or fetched from the database in a
+  form the dump check does not decode. The scanner looks for the code that would decode it, and
+  flags `gzinflate(base64_decode(...))` as a shape without unpacking it.
 - A way of starting a program that is not on its list. That is why every mu-plugin and drop-in
   is listed for you to read.
-- Most of what a database can hide: administrator accounts added by hand, scheduled tasks,
-  options holding code. A dump packed any other way than gzip is not read: inside a zip
-  (`.sql.zip`) it is only named, and `.sql.bz2` or UpdraftPlus's encrypted `.gz.crypt` is not
-  opened.
+- Most of what a database can hide: administrator accounts added by hand, scheduled tasks, code
+  kept in a row compressed or encrypted before its base64, or PHP without `<?php`. A dump
+  packed any other way than gzip is not read: inside a zip (`.sql.zip`) it is only named, and
+  `.sql.bz2` or UpdraftPlus's encrypted `.gz.crypt` is not opened.
 - Code WordPress loads by itself from folders that `wp-config.php` moves elsewhere
   (`WP_CONTENT_DIR`, Bedrock's `app/`). There it is judged as code that cannot be compared.
 - A mu-plugin that hands the work to another file. A file in its own subfolder is judged as
@@ -190,8 +191,8 @@ every one of those tests on the untouched scanner and stops if any fails there: 
 fails anyway would make every mutation it guards look caught.
 
 `SCANNER_BROWSER=firefox` or `webkit` runs the same suite there. Measured on 2026-11-21 with
-Chromium 151, Firefox 153 and WebKit 26.5: 658 tests pass in all three (the one live test is
-off by default), and 748 of 748 mutations are caught. The same suite can be pointed at a site
+Chromium 151, Firefox 153 and WebKit 26.5: 673 tests pass in all three (the one live test is
+off by default), and 782 of 782 mutations are caught. The same suite can be pointed at a site
 that carries the scanner, with that site's own header rules (`SCANNER_SITE_ROOT`,
 `SCANNER_PAGE_PATH` and `SCANNER_SERVED`, described in `tests/serve.py`); the pages at
 helban.dev are tested that way before a release. The tests never reach wordpress.org or

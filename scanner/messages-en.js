@@ -119,6 +119,13 @@ const packedArchive = (params) => `${ARCHIVE_KINDS.get(params.get('what')) ?? UN
 const PACKED_PROGRAM_NOTE = 'Decoded and saved, it is a program that no file in the copy shows.';
 const PACKED_ARCHIVE_NOTE = 'What it unpacks to is in no file of the copy, so this scanner did not see it.';
 
+// The row of the database dump that keeps a file as base64 (database.js findEncodedFiles): its
+// table when the dump names one before it, '' when it does not.
+const encodedRow = (params) => {
+  const table = String(params.get('table') ?? '');
+  return table === '' ? 'A row of the database' : `A row of the ${table} table`;
+};
+
 // Why the files of the core or of a plugin were not compared with wordpress.org.
 const NOT_COMPARED_REASONS = new Map([
   ['no_version', 'its version could not be read from the copy'],
@@ -501,6 +508,16 @@ const FINDING_TEXT = new Map([
   ['config.too_large', (params) => `A server settings file of ${sizeOf(params)}, more than this scanner reads. It was not checked.`],
 
   ['db.eval_base64', () => 'The database stores PHP that runs base64-decoded text through eval, a way to hide what it runs.'],
+  ['db.encoded_program', (params) => (
+    `${encodedRow(params)} holds ${PROGRAM_KINDS.get(params.get('what')) ?? 'a program'} written as base64 text. ${PACKED_PROGRAM_NOTE}`
+  )],
+  ['db.encoded_code', (params) => (
+    `${encodedRow(params)} holds PHP code written as base64 text, and no file in the copy shows it. `
+    + 'It runs only if other code decodes and runs it, so look for the code that reads this row.'
+  )],
+  ['db.encoded_archive', (params) => (
+    `${encodedRow(params)} holds ${ARCHIVE_KINDS.get(params.get('what')) ?? UNKNOWN_ARCHIVE} written as base64 text. ${PACKED_ARCHIVE_NOTE}`
+  )],
   ['db.snippet_rows', () => 'The database stores code snippets, which run as PHP on the site. Read every one before you run the copy.'],
   ['db.snippet_plugin_active', (params) => {
     // The slugs of the active snippet plugins, joined with ", ".

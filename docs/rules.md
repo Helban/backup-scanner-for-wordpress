@@ -679,15 +679,53 @@ one gzip member per table into one file, 14 members for a fresh site, and the br
 (Chromium 151 and Firefox 153, measured 2026-11-21). A damaged or cut file is read up to the
 damage, which is named under "Not checked". The unpacking stops at 4 GB, and that is named too.
 
-- Red: `eval` of `base64_decode` stored anywhere in it.
-- Amber: PHP kept by snippet plugins (WPCode rows, a Code Snippets table, either plugin active),
-  plugins the database calls active whose folder the copy lacks, `<script src>` pointing at hosts
-  other than the site's own, and sentences written for an AI assistant that reads the copy
-  ("ignore previous instructions").
+- Red: `eval` of `base64_decode` stored anywhere in it, and a Windows or Linux program kept in a
+  row as base64 text.
+- Amber: PHP code or an archive kept in a row as base64 text, PHP kept by snippet plugins (WPCode
+  rows, a Code Snippets table, either plugin active), plugins the database calls active whose
+  folder the copy lacks, `<script src>` pointing at hosts other than the site's own, and
+  sentences written for an AI assistant that reads the copy ("ignore previous instructions").
 
 Those sentences are looked for in PHP files and in the first bytes of text files too. The
 names of AI models are not: WordPress 7 ships an AI client of its own and translations that
 name them.
+
+A file can be kept in a row as base64 text, in an option or a post's meta, where no check of the
+copy's files ever sees it. So every run of base64 letters in the dump is decoded from its start,
+the way PHP's `base64_decode` reads it.
+
+Escaped line breaks inside a run are read through. mysqldump writes them as `\n`, and
+`chunk_split` puts one every 76 letters. JSON's escaped slash (`\/`) is read through too. Both
+count with 1 to 8 backslashes in front of the `n`, `r` or `/`. Any other letter right after a
+backslash belongs to mysqldump's escape (`\0` for a NUL byte, `\Z`, `\t`), and so does an `n` or
+`r` after more than 8 backslashes. The run then starts behind it.
+
+Runs shorter than 32 letters are left alone. Of a longer run, the first 768 letters (576 bytes)
+are decoded, as many of them as lie in the run's first 1,015 characters. The run is decoded a
+second time from behind its first group of line breaks, within the same 1,015 characters. That is
+for mail: an attachment sits behind a header line that ends in letters (`filename=setup.exe`, a
+blank line, then the base64), and the two read as one run would decode out of step.
+
+The decoded bytes are judged the way a base64 string in a PHP file is. A program with its full
+header (MZ with the PE mark where the header points, or the ELF header) is red. `<?php` anywhere
+in them, in any letter case, is amber, because PHP kept in the database runs only when code reads
+it back. An archive (zip, gzip, 7z, RAR, tar and the rest) is amber, because a plugin may keep one
+for an honest reason. Each of the three is named once per dump.
+
+The finding names the table when the row's line tells it. A dump escapes every line break inside
+a value, so a real line break ends a statement or a row. In the dumps of the test copies, MySQL's
+mysqldump writes an `INSERT` with its rows on the same line. MariaDB's dump and UpdraftPlus write
+each row on a line of its own that starts with `(`, after spaces at most. The table is taken from
+the `INSERT` or `REPLACE` (with `IGNORE`, `LOW_PRIORITY` and the like) at the start of the row's
+line, or, for a line of rows, from the statement line above them. For a name with its database in
+front, the table part counts. A line of any other statement (`UPDATE`, `CREATE`, a comment) gives
+no table, and neither does a name that is not letters, digits, `_` and `$`, up to 64 of them. SQL
+quoted inside a row is not a statement.
+
+A long base64 text alone is not a finding, and that is narrow on purpose. The dumps of the test
+copies (five sites, one of them packed three ways) gave none of the three findings, and a row
+planted in each of them was found (2026-11-21). Those are fresh sites. What older sites with
+years of plugins behind them keep in their rows was not measured.
 
 A copy without a dump gets that said under "Not checked", and so does a dump inside a zip found
 in the copy: the database checks need the site around the dump, its plugins and its address.
@@ -737,7 +775,8 @@ the last one needs an archive built on purpose to fool how names and folders are
   PHP at the start or the end are found; anything that has to be decoded first is not. The
   code that would decode it is what the PHP checks look for.
 - A program kept in PHP in a form the scanner does not decode: split across several variables
-  and glued at run time, compressed before it was encoded, or fetched from the database.
+  and glued at run time, compressed before it was encoded, or fetched from a database whose dump
+  is not in the copy or keeps it in a form the dump check does not decode (see below).
 - What packed code says once unpacked. `gzinflate(base64_decode('...'))` is flagged as a
   shape, but the scanner does not inflate the payload to read it.
 - PHP in a file whose extension says nothing (`.bin`, `.dat`, no extension), loaded by a
@@ -750,8 +789,16 @@ the last one needs an archive built on purpose to fool how names and folders are
   (`__call`). The call through a variable inside it is still amber in a mu-plugin.
 - A way of starting a program that is not on the list. That is why every mu-plugin and
   drop-in is listed for reading, whatever the rules found.
-- Most of what a database can hide: administrator accounts added by hand, scheduled tasks,
-  options holding code. Only the checks listed above run on the dump.
+- Most of what a database can hide: administrator accounts added by hand, scheduled tasks, and
+  code or files kept in a row in a way the base64 check does not read: compressed (`gzcompress`,
+  `gzdeflate`) or encrypted before the base64; PHP without `<?php` in the first 576 decoded bytes
+  (a fragment meant for `eval`, or one that opens with `<?=` or a bare `<?`); a Windows program
+  whose PE header lies further than that; a run whose first 1,015 characters hold too few letters
+  for the header (600 escaped line breaks in front of it, say); base64 broken by anything other
+  than escaped line breaks and slashes, such as a NUL byte or a space inside it; a backslash that
+  was part of the stored value standing right before an `n` or `r` letter (`\\n` is read as a
+  line break written by JSON); another encoding (URL-safe base64, hex); or a second file of a
+  kind already named in the same dump. Only the checks listed above run on the dump.
 - A dump packed in any other way than gzip: inside a zip (`.sql.zip`) it is only named,
   `.sql.bz2` or UpdraftPlus's encrypted `.gz.crypt` is not opened. Also, a dump whose name is
   none of the three above, and the rest of a packed dump past 4 GB unpacked.

@@ -112,6 +112,10 @@ export const RULES = new Map([
 
   // The database dump (database.js) and text aimed at an AI reader (text-rules.js).
   ['db.eval_base64', 'red'],
+  // A file kept in a row as base64 text, told by its first bytes once decoded.
+  ['db.encoded_program', 'red'],
+  ['db.encoded_code', 'amber'],
+  ['db.encoded_archive', 'amber'],
   ['db.snippet_rows', 'amber'],
   ['db.snippet_plugin_active', 'amber'],
   ['db.active_plugin_missing', 'amber'],

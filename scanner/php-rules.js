@@ -247,7 +247,8 @@ const decodeHex = (text) => {
 };
 
 // PHP's base64_decode without the strict flag skips every character outside the alphabet.
-const decodeBase64 = (text) => {
+// database.js decodes base64 kept in the dump with this too.
+export const decodeBase64 = (text) => {
   const clean = text.replace(/[^A-Za-z0-9+/]/g, '');
   // One character left over after the last whole group holds less than a byte.
   const usable = clean.length % BASE64_GROUP_CHARACTERS === 1 ? clean.slice(0, -1) : clean;
@@ -665,8 +666,8 @@ const codeMarkerIn = (lower) => ALL_CODE_MARKERS.find((marker) => lower.includes
 // A program or an archive kept as text: decoded and written to a file, it becomes a file no
 // check of the copy's files ever saw. A program is told by its full header, an archive by its
 // first bytes in a string long enough to be one ("PK\x03\x04" alone is how honest code asks
-// whether a file is a zip).
-const packedFileIn = (decodedText) => {
+// whether a file is a zip). database.js judges base64 kept in the dump with the same function.
+export const packedFileIn = (decodedText) => {
   if (decodedText.startsWith('MZ') || decodedText.startsWith('\x7fELF')) {
     const kind = programHeaderKind(bytesOf(decodedText));
     if (kind !== null) return { signal: 'encoded_program', kind };
@@ -678,7 +679,13 @@ const packedFileIn = (decodedText) => {
   return confirms === undefined || confirms(decodedText) ? { signal: 'encoded_archive', kind } : null;
 };
 
-const bytesOf = (binaryText) => Uint8Array.from(binaryText, (character) => character.charCodeAt(0));
+// A loop, not Uint8Array.from with a mapper: the dump judges every base64 run of 32 letters or
+// more, and the mapper took half of the time of a dump made of such runs.
+export const bytesOf = (binaryText) => {
+  const bytes = new Uint8Array(binaryText.length);
+  for (let at = 0; at < binaryText.length; at += 1) bytes[at] = binaryText.charCodeAt(at);
+  return bytes;
+};
 
 const PACKED_ARCHIVE_MIN_LENGTH = 64;
 // A tar is told by "ustar" at byte 257.

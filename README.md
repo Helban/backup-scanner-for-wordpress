@@ -156,6 +156,37 @@ writes as a usable file) can take a file off the list of code WordPress loads by
 cases and a few unusual site layouts make up the rest of the list, in
 [docs/rules.md](docs/rules.md#what-it-does-not-catch-the-full-list).
 
+## After the scan: test the restore
+
+The scanner reads the copy and runs none of it, so what the code does once it runs only shows
+when you run it. A payload can wait on a path nobody visits, and a home page that loads after the
+restore proves little. Do this only with a copy that has no red finding. A red one you do not run
+at all.
+
+Restore it on a computer or virtual machine you can wipe afterward, and block its outgoing
+connections there. The copy carries the site's real settings: with the network open, its contact
+form mails real people, a shop's checkout reaches the live payment gateway, and a payload can
+call home. A connection the firewall blocked is worth reading in its log. Then walk the paths
+the site really uses:
+
+1. Right after the import, dump the whole database one row per line, and note the time:
+   `mysqldump --skip-extended-insert --skip-dump-date <database> > before.sql`
+   (on MariaDB the program is `mariadb-dump`, with the same options).
+2. Log in to wp-admin and open the screens you normally work in.
+3. Send every form the site has once, the contact form and, in a shop, the checkout.
+4. Click through the front end with the browser's network panel open. That fires the
+   `admin-ajax.php` and REST calls your theme and plugins make.
+5. Dump the database again to `after.sql` and compare the two files. Transients and sessions
+   change on their own; read every other row that appeared or changed, in `wp_users`,
+   `wp_usermeta`, `wp_options` and `wp_posts` first (the prefix may be other than `wp_`).
+6. List the files of the site changed since the time you noted, by their change time, which
+   `touch` cannot set back: `find <site folder> -type f -newerct '<time>'`. A file deleted in the
+   meantime does not show here.
+
+After these steps, "it restored fine" means that on the paths you walked nothing changed in the
+database or the files that you cannot explain. That is narrower than "clean", and the scan cannot
+say it for you, because it never runs the code.
+
 ## Check the page against this code
 
 `verify_live.py` downloads every file of `scanner/` from a site and compares it byte for byte

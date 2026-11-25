@@ -212,7 +212,8 @@ Measured on 79 honest archives of one WordPress-like tree (GNU tar in its five f
 `-S`, `--label`, `-g`, `--xattrs`, a global header and two blocking factors; bsdtar in pax,
 ustar, v7 and gnutar formats; busybox; Python's tarfile in pax and gnu formats; node-tar; git
 archive; PHP's PharData): the 53 written in the usual ways are all in the form. The 26 outside
-it are sparse files (GNU `-S`, bsdtar's default), GNU incremental dumps and volume labels.
+it are sparse files (GNU `-S`, and bsdtar's default on a file system that reports the holes, as
+the test machine's ext4 does), GNU incremental dumps and volume labels.
 
 Against the review cases and random mutants, with each of the four programs unpacking every
 archive: of 460 cases from the three reviews, 70 are in the form, and in each of them every file
